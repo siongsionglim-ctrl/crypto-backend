@@ -32,6 +32,10 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             min_confidence_pct=float(config.get("min_confidence_pct", 60.0)),
             min_rr_ratio=float(config.get("min_rr_ratio", 1.2)),
             limit=int(config.get("scan_limit", 12)),
+            exchange=config.get("scan_exchange") or config.get("exchange", "binance"),
+            timeframe=config.get("scan_timeframe") or config.get("timeframe", "1h"),
+            market_type=config.get("scan_market_type") or config.get("market_type", "future"),
+            testnet=bool(config.get("testnet", True)),
         )
 
     top = scan_result.get("top", [])
@@ -63,6 +67,9 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         min_rr_ratio=float(config.get("min_rr_ratio", 1.2)),
         cooldown_minutes=int(config.get("cooldown_minutes", 15)),
         allowed_sides=tuple(config.get("allowed_sides", ["BUY", "SELL"])),
+        max_daily_loss_pct=float(config.get("max_daily_loss_pct", 5.0)),
+        max_open_positions=int(config.get("max_open_positions", 1)),
+        max_consecutive_losses=int(config.get("max_consecutive_losses", 3)),
     )
 
     if not risk.allowed:
@@ -92,9 +99,14 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         side=side,
         amount=float(config.get("amount", 0.001)),
         testnet=bool(config.get("testnet", True)),
+        market_type=config.get("market_type", "future"),
+        leverage=int(config.get("leverage", 3)),
+        risk_per_trade_pct=float(config.get("risk_per_trade_pct", 1.0)),
+        entry_price=best.get("entry") or best.get("price"),
+        stop_loss=best.get("sl"),
     )
 
-    record_trade()
+    record_trade(best)
 
     return {
         "ok": True,

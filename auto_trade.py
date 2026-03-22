@@ -20,7 +20,13 @@ def run_auto_trade(config: dict):
     amount = float(config.get("amount", 0.001))
     risk_per_trade_pct = float(config.get("risk_per_trade_pct", 1.0))
 
-    signal = generate_signal(symbol)
+    signal = generate_signal(
+        symbol,
+        exchange=config.get("exchange", "binance"),
+        timeframe=config.get("timeframe", "1h"),
+        market_type=config.get("market_type", "future"),
+        testnet=bool(config.get("testnet", True)),
+    )
     action = signal.get("action")
     side = normalize_side(action)
 
@@ -39,6 +45,9 @@ def run_auto_trade(config: dict):
         min_rr_ratio=float(config.get("min_rr_ratio", 1.5)),
         cooldown_minutes=int(config.get("cooldown_minutes", 15)),
         allowed_sides=tuple(config.get("allowed_sides", ["BUY", "SELL"])),
+        max_daily_loss_pct=float(config.get("max_daily_loss_pct", 5.0)),
+        max_open_positions=int(config.get("max_open_positions", 1)),
+        max_consecutive_losses=int(config.get("max_consecutive_losses", 3)),
     )
 
     if not risk.allowed:
@@ -73,7 +82,7 @@ def run_auto_trade(config: dict):
         stop_loss=signal.get("sl"),
     )
 
-    record_trade()
+    record_trade(signal)
 
     return {
         "ok": True,

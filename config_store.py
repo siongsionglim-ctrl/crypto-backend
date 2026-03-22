@@ -6,7 +6,6 @@ from typing import Any
 
 CONFIG_FILE = Path("user_config.json")
 
-
 _SECRET_KEYS = {"api_key", "secret", "passphrase"}
 
 
@@ -23,7 +22,11 @@ def _default_config() -> dict[str, Any]:
         "market_type": "future",
         "timeframe": "1h",
         "higher_timeframe": "4h",
+        "scan_timeframe": "1h",
+        "scan_market_type": "future",
+        "scan_exchange": "binance",
         "leverage": 3,
+        "risk_per_trade_pct": 1.0,
         "max_daily_trades": 3,
         "min_confidence_pct": 70.0,
         "min_rr_ratio": 1.5,
@@ -35,6 +38,7 @@ def _default_config() -> dict[str, Any]:
         "hunter_enabled": False,
         "scan_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "SUIUSDT"],
         "scan_limit": 5,
+        "scan_cache_ttl_seconds": 45,
     }
 
 

@@ -46,7 +46,6 @@ def rank_score(signal: Dict[str, Any]) -> float:
 
     dominant_prob = max(breakout, breakdown, bounce)
 
-    # Hard penalty for HOLD
     if action == "HOLD":
         return -999.0 + confidence * 0.01
 
@@ -57,13 +56,11 @@ def rank_score(signal: Dict[str, Any]) -> float:
     score += min(rr, 4.0) * 10.0
     score += min(volume_ratio, 3.0) * 3.0
 
-    # Bonus if action direction matches dominant structure
     if action == "BUY" and breakout >= breakdown:
         score += 8.0
     if action == "SELL" and breakdown >= breakout:
         score += 8.0
 
-    # Penalty if weak RR
     if rr < 1.2:
         score -= 12.0
 
@@ -75,6 +72,10 @@ def scan_symbols(
     min_confidence_pct: float = 55.0,
     min_rr_ratio: float = 1.0,
     limit: int = 12,
+    exchange: str = "binance",
+    timeframe: str = "1h",
+    market_type: str = "future",
+    testnet: bool = True,
 ) -> Dict[str, Any]:
     symbols = symbols or DEFAULT_SCAN_SYMBOLS
 
@@ -83,12 +84,24 @@ def scan_symbols(
 
     for symbol in symbols:
         try:
-            candles = fetch_candles(symbol)
+            candles = fetch_candles(
+                symbol,
+                exchange=exchange,
+                timeframe=timeframe,
+                market_type=market_type,
+                testnet=testnet,
+            )
             if not candles:
                 errors.append({"symbol": symbol, "reason": "No data"})
                 continue
 
-            signal = generate_signal(symbol)
+            signal = generate_signal(
+                symbol,
+                exchange=exchange,
+                timeframe=timeframe,
+                market_type=market_type,
+                testnet=testnet,
+            )
 
             if signal.get("error"):
                 errors.append({"symbol": symbol, "reason": signal["error"]})
@@ -98,7 +111,6 @@ def scan_symbols(
             rr = _safe_float(signal.get("rr_ratio"))
             action = str(signal.get("action", "HOLD")).upper()
 
-            # Keep the full result, but mark whether it qualifies
             qualifies = (
                 action in ("BUY", "SELL")
                 and confidence >= min_confidence_pct
@@ -121,6 +133,9 @@ def scan_symbols(
 
     return {
         "ok": True,
+        "exchange": exchange,
+        "timeframe": timeframe,
+        "market_type": market_type,
         "scanned_count": len(symbols),
         "qualified_count": len(qualified),
         "top": qualified[:limit],
