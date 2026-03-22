@@ -6,6 +6,10 @@ from auto_trade import run_auto_trade
 from config_store import save_config, load_config
 from risk_manager import get_state
 
+from models import SignalRequest, TradeRequest, BotConfigRequest, ScanRequest
+from engine.scanner_engine import scan_symbols
+from auto_hunter import run_auto_hunter
+
 app = FastAPI()
 
 
@@ -56,6 +60,8 @@ def bot_run():
     if not config:
         raise HTTPException(status_code=400, detail="Bot config not found")
     try:
+        if config.get("hunter_enabled", False):
+            return run_auto_hunter(config)
         return run_auto_trade(config)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -64,3 +70,12 @@ def bot_run():
 @app.get("/bot/state")
 def bot_state():
     return {"ok": True, "state": get_state()}
+
+@app.post("/scan")
+def scan(req: ScanRequest):
+    return scan_symbols(
+        symbols=req.symbols,
+        min_confidence_pct=req.min_confidence_pct,
+        min_rr_ratio=req.min_rr_ratio,
+        limit=req.limit,
+    )
