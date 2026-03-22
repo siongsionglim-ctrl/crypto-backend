@@ -105,28 +105,10 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         risk_per_trade_pct=float(config.get("risk_per_trade_pct", 1.0)),
         entry_price=best.get("entry") or best.get("price"),
         stop_loss=best.get("sl"),
-        take_profit=best.get("tp"),
-        safe_mode=bool(config.get("safe_mode", True)),
     )
 
-    register_open_position(
-        symbol=best["symbol"],
-        side=side,
-        amount=float(order.get("amount") or config.get("amount", 0.001)),
-        entry=best.get("entry") or best.get("price"),
-        stop_loss=best.get("sl"),
-        take_profit=best.get("tp"),
-        protected=bool(((order.get("protection") or {}).get("placed"))),
-        protection_mode=(order.get("protection") or {}).get("mode"),
-    )
+    register_open_position(best["symbol"], best.get("action", side).upper(), float(order.get("amount") or config.get("amount", 0.001)), best.get("entry") or best.get("price"))
     record_trade(best)
-
-    reason = "Auto Hunter trade executed"
-    protection = order.get("protection") or {}
-    if protection.get("placed"):
-        reason += " with exchange SL/TP protection"
-    elif protection.get("warning"):
-        reason += f"; warning: {protection.get('warning')}"
 
     return {
         "ok": True,
@@ -134,5 +116,5 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         "best_signal": best,
         "scan_result": scan_result,
         "order": order,
-        "reason": reason,
+        "reason": "Auto Hunter trade executed",
     }

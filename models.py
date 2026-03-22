@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pydantic import BaseModel, Field
 
 
@@ -27,8 +25,6 @@ class TradeRequest(BaseModel):
     risk_per_trade_pct: float = 1.0
     entry_price: float | None = None
     stop_loss: float | None = None
-    take_profit: float | None = None
-    safe_mode: bool = True
 
 
 class BotConfigRequest(BaseModel):
@@ -47,7 +43,6 @@ class BotConfigRequest(BaseModel):
     leverage: int = 3
     auto_leverage: bool = True
     risk_per_trade_pct: float = 1.0
-    safe_mode: bool = True
 
     max_daily_trades: int = 3
     min_confidence_pct: float = 70.0
@@ -81,7 +76,6 @@ class BotConfigRequest(BaseModel):
     ]
     scan_limit: int = 12
     scan_cache_ttl_seconds: int = 45
-    bot_cycle_seconds: int = 20
 
 
 class ScanRequest(BaseModel):

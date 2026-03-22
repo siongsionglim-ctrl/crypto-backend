@@ -76,16 +76,12 @@ def has_open_position(symbol: str | None = None) -> bool:
 
 
 
-def register_open_position(symbol: str, side: str, amount: float, entry: float | None = None, stop_loss: float | None = None, take_profit: float | None = None, protected: bool = False, protection_mode: str | None = None):
+def register_open_position(symbol: str, side: str, amount: float, entry: float | None = None):
     state = get_state()
     state.setdefault("open_positions", {})[symbol] = {
         "side": side,
         "amount": amount,
         "entry": entry,
-        "stop_loss": stop_loss,
-        "take_profit": take_profit,
-        "protected": protected,
-        "protection_mode": protection_mode,
         "opened_at": datetime.utcnow().isoformat(),
     }
     save_state(state)
@@ -171,3 +167,13 @@ def record_trade(signal: dict, pnl_pct: float | None = None):
         else:
             state["consecutive_losses"] = 0
     save_state(state)
+
+
+
+def set_open_positions(positions: dict, sync_error: str | None = None):
+    state = get_state()
+    state['open_positions'] = positions or {}
+    state['last_position_sync_time'] = datetime.utcnow().isoformat()
+    state['last_position_sync_error'] = sync_error
+    save_state(state)
+    return state

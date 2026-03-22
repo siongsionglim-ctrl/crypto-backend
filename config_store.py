@@ -28,7 +28,6 @@ def _default_config() -> dict[str, Any]:
         "leverage": 3,
         "auto_leverage": True,
         "risk_per_trade_pct": 1.0,
-        "safe_mode": True,
         "max_daily_trades": 3,
         "min_confidence_pct": 70.0,
         "min_rr_ratio": 1.5,
@@ -41,7 +40,6 @@ def _default_config() -> dict[str, Any]:
         "scan_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "SUIUSDT"],
         "scan_limit": 5,
         "scan_cache_ttl_seconds": 45,
-        "bot_cycle_seconds": 20,
     }
 
 

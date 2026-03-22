@@ -81,33 +81,15 @@ def run_auto_trade(config: dict):
         risk_per_trade_pct=risk_per_trade_pct,
         entry_price=signal.get("entry") or signal.get("price"),
         stop_loss=signal.get("sl"),
-        take_profit=signal.get("tp"),
-        safe_mode=bool(config.get("safe_mode", True)),
     )
 
-    register_open_position(
-        symbol=symbol,
-        side=side,
-        amount=float(order.get("amount") or amount),
-        entry=signal.get("entry") or signal.get("price"),
-        stop_loss=signal.get("sl"),
-        take_profit=signal.get("tp"),
-        protected=bool(((order.get("protection") or {}).get("placed"))),
-        protection_mode=(order.get("protection") or {}).get("mode"),
-    )
+    register_open_position(symbol, signal.get("action", side).upper(), float(order.get("amount") or amount), signal.get("entry") or signal.get("price"))
     record_trade(signal)
-
-    reason = f"Trade executed with dynamic sizing ({risk_per_trade_pct}% risk)"
-    protection = order.get("protection") or {}
-    if protection.get("placed"):
-        reason += " and exchange SL/TP protection placed"
-    elif protection.get("warning"):
-        reason += f"; warning: {protection.get('warning')}"
 
     return {
         "ok": True,
         "mode": "auto_trade",
         "signal": signal,
         "order": order,
-        "reason": reason,
+        "reason": f"Trade executed with dynamic sizing ({risk_per_trade_pct}% risk)",
     }

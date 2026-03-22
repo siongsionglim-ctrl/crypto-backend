@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from pathlib import Path
@@ -10,11 +9,11 @@ from fastapi import FastAPI, HTTPException
 from models import SignalRequest, TradeRequest, BotConfigRequest, ScanRequest
 from engine.trading_engine import generate_signal
 from engine.scanner_engine import scan_symbols
-from exchange_executor import place_market_order, build_exchange
+from exchange_executor import place_market_order, build_exchange, fetch_live_positions
 from auto_trade import run_auto_trade
 from auto_hunter import run_auto_hunter
 from config_store import save_config, load_config, sanitize_config
-from risk_manager import get_state
+from risk_manager import get_state, set_open_positions
 
 app = FastAPI()
 
@@ -25,7 +24,6 @@ _SCAN_CACHE: dict = {
 }
 
 BOT_META_FILE = Path("bot_runtime_meta.json")
-_BOT_TASK: asyncio.Task | None = None
 
 
 def _log(message: str) -> None:
@@ -34,28 +32,12 @@ def _log(message: str) -> None:
 
 def _load_meta() -> dict:
     if not BOT_META_FILE.exists():
-        return {
-            "running": False,
-            "loop_active": False,
-            "last_result": None,
-            "last_started_at": None,
-            "last_stopped_at": None,
-            "last_cycle_at": None,
-            "last_error": None,
-        }
+        return {"running": False, "last_result": None, "last_started_at": None, "last_stopped_at": None}
     try:
         raw = json.loads(BOT_META_FILE.read_text(encoding="utf-8"))
     except Exception:
         raw = {}
-    base = {
-        "running": False,
-        "loop_active": False,
-        "last_result": None,
-        "last_started_at": None,
-        "last_stopped_at": None,
-        "last_cycle_at": None,
-        "last_error": None,
-    }
+    base = {"running": False, "last_result": None, "last_started_at": None, "last_stopped_at": None}
     base.update(raw or {})
     return base
 
@@ -67,6 +49,32 @@ def _save_meta(data: dict) -> dict:
 
 def _scan_cache_fresh(ttl_seconds: int = 45) -> bool:
     return _SCAN_CACHE["data"] is not None and (time.time() - _SCAN_CACHE["created_at"] <= ttl_seconds)
+
+
+def _has_exchange_credentials(config: dict) -> bool:
+    return bool((config.get("api_key") or "").strip() and (config.get("secret") or "").strip())
+
+
+def _sync_open_positions_with_exchange(config: dict) -> dict:
+    if not _has_exchange_credentials(config):
+        return get_state()
+    try:
+        symbols = config.get("scan_symbols") or [config.get("symbol")]
+        live_positions = fetch_live_positions(
+            exchange_name=config.get("exchange", "binance"),
+            api_key=config.get("api_key", ""),
+            secret=config.get("secret", ""),
+            passphrase=config.get("passphrase"),
+            testnet=bool(config.get("testnet", True)),
+            market_type=config.get("market_type", "future"),
+            symbols=symbols,
+        )
+        state = set_open_positions(live_positions, sync_error=None)
+        _log(f"position sync complete count={len(live_positions)}")
+        return state
+    except Exception as e:
+        state = get_state()
+        return set_open_positions(state.get("open_positions") or {}, sync_error=str(e))
 
 
 def _build_scan_params_from_config(config: dict) -> dict:
@@ -125,52 +133,6 @@ def _run_bot_cycle(config: dict) -> dict:
     return result
 
 
-async def _bot_loop() -> None:
-    meta = _load_meta()
-    meta["loop_active"] = True
-    meta["last_error"] = None
-    _save_meta(meta)
-    _log("background loop started")
-    try:
-        while True:
-            meta = _load_meta()
-            if not meta.get("running", False):
-                break
-            try:
-                config = load_config()
-                result = _run_bot_cycle(config)
-                meta = _load_meta()
-                meta["last_result"] = result
-                meta["last_cycle_at"] = time.time()
-                meta["last_error"] = None
-                _save_meta(meta)
-            except Exception as exc:
-                meta = _load_meta()
-                meta["last_error"] = str(exc)
-                meta["last_cycle_at"] = time.time()
-                _save_meta(meta)
-                _log(f"cycle error: {exc}")
-            await asyncio.sleep(max(5, int(load_config().get("bot_cycle_seconds", 20))))
-    finally:
-        meta = _load_meta()
-        meta["loop_active"] = False
-        _save_meta(meta)
-        _log("background loop stopped")
-
-
-async def _ensure_bot_loop_started() -> None:
-    global _BOT_TASK
-    if _BOT_TASK is None or _BOT_TASK.done():
-        _BOT_TASK = asyncio.create_task(_bot_loop())
-
-
-@app.on_event("startup")
-async def _startup() -> None:
-    meta = _load_meta()
-    if meta.get("running"):
-        await _ensure_bot_loop_started()
-
-
 @app.get("/")
 def root():
     return {"status": "AI Trading Backend Running"}
@@ -205,8 +167,6 @@ def trade(req: TradeRequest):
             risk_per_trade_pct=req.risk_per_trade_pct,
             entry_price=req.entry_price,
             stop_loss=req.stop_loss,
-            take_profit=req.take_profit,
-            safe_mode=req.safe_mode,
         )
         return {"ok": True, "order": result}
     except Exception as e:
@@ -235,8 +195,6 @@ def bot_run():
         result = _run_bot_cycle(config)
         meta = _load_meta()
         meta["last_result"] = result
-        meta["last_cycle_at"] = time.time()
-        meta["last_error"] = None
         _save_meta(meta)
         return result
     except Exception as e:
@@ -244,18 +202,19 @@ def bot_run():
 
 
 @app.post("/bot/start")
-async def bot_start(req: BotConfigRequest):
+def bot_start(req: BotConfigRequest):
     try:
         config = save_config(req.model_dump())
+        _sync_open_positions_with_exchange(config)
+        result = _run_bot_cycle(config)
         meta = _load_meta()
         meta.update({
             "running": True,
             "last_started_at": time.time(),
-            "last_error": None,
+            "last_result": result,
         })
         _save_meta(meta)
-        await _ensure_bot_loop_started()
-        return {"ok": True, "running": True, "config": sanitize_config(config), "safe_mode": bool(config.get("safe_mode", True))}
+        return {"ok": True, "running": True, "result": result, "config": sanitize_config(config)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -272,16 +231,14 @@ def bot_stop():
 @app.get("/bot/status")
 def bot_status():
     meta = _load_meta()
-    state = get_state()
     config = load_config()
+    state = _sync_open_positions_with_exchange(config)
     last_result = meta.get("last_result") or {}
     signal = last_result.get("signal") or last_result.get("best_signal") or {}
     order_wrap = last_result.get("order") if isinstance(last_result.get("order"), dict) else {}
-    protection = order_wrap.get("protection") if isinstance(order_wrap, dict) else None
     return {
         "ok": True,
         "running": bool(meta.get("running", False)),
-        "loop_active": bool(meta.get("loop_active", False)),
         "hunter_enabled": bool(config.get("hunter_enabled", False)),
         "exchange": config.get("exchange"),
         "market_type": config.get("market_type", "future"),
@@ -295,11 +252,10 @@ def bot_status():
         "position_size": order_wrap.get("amount"),
         "notional_estimate": order_wrap.get("notional_estimate"),
         "applied_leverage": order_wrap.get("applied_leverage"),
-        "protection": protection,
-        "safe_mode": bool(config.get("safe_mode", True)),
-        "last_cycle_at": meta.get("last_cycle_at"),
-        "last_error": meta.get("last_error"),
         "open_positions": len((state.get("open_positions") or {})),
+        "open_positions_detail": state.get("open_positions") or {},
+        "last_position_sync_time": state.get("last_position_sync_time"),
+        "last_position_sync_error": state.get("last_position_sync_error"),
         "trade_count_today": state.get("trade_count_today", 0),
         "daily_pnl": state.get("daily_realized_pnl_pct", 0.0),
         "last_trade_time": state.get("last_trade_time"),
@@ -335,10 +291,24 @@ def bot_test_connection(req: BotConfigRequest | None = None):
             "markets_loaded": True,
             "balance_available": isinstance(balance, dict),
             "message": "Connection test passed",
-            "safe_mode": bool(config.get("safe_mode", True)),
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/bot/sync-positions")
+def bot_sync_positions():
+    config = load_config()
+    if not config:
+        raise HTTPException(status_code=400, detail="Bot config not found")
+    state = _sync_open_positions_with_exchange(config)
+    return {
+        "ok": True,
+        "open_positions": state.get("open_positions") or {},
+        "count": len((state.get("open_positions") or {})),
+        "last_position_sync_time": state.get("last_position_sync_time"),
+        "last_position_sync_error": state.get("last_position_sync_error"),
+    }
 
 
 @app.get("/bot/state")
