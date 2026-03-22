@@ -20,32 +20,35 @@ def _default_config() -> dict[str, Any]:
         "amount": 0.001,
         "testnet": True,
         "market_type": "future",
-        "timeframe": "1h",
-        "higher_timeframe": "4h",
+        "timeframe": "1m",
         "scan_exchange": "binance",
-        "scan_timeframe": "1h",
+        "scan_timeframe": "1m",
         "scan_market_type": "future",
+        "higher_timeframe": "5m",
         "leverage": 3,
         "auto_leverage": True,
         "risk_per_trade_pct": 1.0,
         "max_daily_trades": 3,
-        "min_confidence_pct": 70.0,
-        "min_rr_ratio": 1.5,
-        "cooldown_minutes": 15,
+        "min_confidence_pct": 50.0,
+        "min_rr_ratio": 1.2,
+        "cooldown_minutes": 5,
         "allowed_sides": ["BUY", "SELL"],
         "max_daily_loss_pct": 5.0,
         "max_open_positions": 1,
         "max_consecutive_losses": 3,
         "hunter_enabled": False,
         "scan_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "SUIUSDT"],
-        "scan_limit": 5,
-        "scan_cache_ttl_seconds": 45,
+        "scan_limit": 20,
+        "scan_cache_ttl_seconds": 12,
+        "bot_cycle_seconds": None,
     }
 
 
 def save_config(data: dict) -> dict:
     merged = _default_config()
     merged.update(data or {})
+    if not merged.get("scan_exchange"):
+        merged["scan_exchange"] = merged.get("exchange", "binance")
     CONFIG_FILE.write_text(json.dumps(merged, indent=2), encoding="utf-8")
     return merged
 
@@ -60,6 +63,8 @@ def load_config() -> dict:
 
     merged = _default_config()
     merged.update(raw or {})
+    if not merged.get("scan_exchange"):
+        merged["scan_exchange"] = merged.get("exchange", "binance")
     return merged
 
 
