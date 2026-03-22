@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-import threading
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -25,9 +25,7 @@ _SCAN_CACHE: dict = {
 }
 
 BOT_META_FILE = Path("bot_runtime_meta.json")
-
-_BOT_THREAD: threading.Thread | None = None
-_BOT_STOP_EVENT = threading.Event()
+_BOT_TASK: asyncio.Task | None = None
 
 
 def _log(message: str) -> None:
@@ -36,12 +34,28 @@ def _log(message: str) -> None:
 
 def _load_meta() -> dict:
     if not BOT_META_FILE.exists():
-        return {"running": False, "last_result": None, "last_started_at": None, "last_stopped_at": None, "last_cycle_at": None, "last_error": None}
+        return {
+            "running": False,
+            "loop_active": False,
+            "last_result": None,
+            "last_started_at": None,
+            "last_stopped_at": None,
+            "last_cycle_at": None,
+            "last_error": None,
+        }
     try:
         raw = json.loads(BOT_META_FILE.read_text(encoding="utf-8"))
     except Exception:
         raw = {}
-    base = {"running": False, "last_result": None, "last_started_at": None, "last_stopped_at": None, "last_cycle_at": None, "last_error": None}
+    base = {
+        "running": False,
+        "loop_active": False,
+        "last_result": None,
+        "last_started_at": None,
+        "last_stopped_at": None,
+        "last_cycle_at": None,
+        "last_error": None,
+    }
     base.update(raw or {})
     return base
 
@@ -53,49 +67,6 @@ def _save_meta(data: dict) -> dict:
 
 def _scan_cache_fresh(ttl_seconds: int = 45) -> bool:
     return _SCAN_CACHE["data"] is not None and (time.time() - _SCAN_CACHE["created_at"] <= ttl_seconds)
-
-def _bot_loop_interval_seconds(config: dict) -> int:
-    ttl = int(config.get("scan_cache_ttl_seconds", 45) or 45)
-    return max(10, min(300, ttl))
-
-
-def _background_bot_loop() -> None:
-    _log("background loop started")
-    while not _BOT_STOP_EVENT.is_set():
-        meta = _load_meta()
-        if not meta.get("running", False):
-            break
-        try:
-            config = load_config()
-            result = _run_bot_cycle(config)
-            meta = _load_meta()
-            meta["last_result"] = result
-            meta["last_cycle_at"] = time.time()
-            meta["last_error"] = None
-            _save_meta(meta)
-        except Exception as e:
-            meta = _load_meta()
-            meta["last_error"] = str(e)
-            meta["last_cycle_at"] = time.time()
-            _save_meta(meta)
-            _log(f"cycle error: {e}")
-        wait_s = _bot_loop_interval_seconds(load_config())
-        _BOT_STOP_EVENT.wait(wait_s)
-    _log("background loop stopped")
-
-
-def _ensure_bot_thread_started() -> None:
-    global _BOT_THREAD
-    if _BOT_THREAD is not None and _BOT_THREAD.is_alive():
-        return
-    _BOT_STOP_EVENT.clear()
-    _BOT_THREAD = threading.Thread(target=_background_bot_loop, daemon=True, name="bot-loop")
-    _BOT_THREAD.start()
-
-
-def _stop_bot_thread() -> None:
-    _BOT_STOP_EVENT.set()
-
 
 
 def _build_scan_params_from_config(config: dict) -> dict:
@@ -154,13 +125,50 @@ def _run_bot_cycle(config: dict) -> dict:
     return result
 
 
+async def _bot_loop() -> None:
+    meta = _load_meta()
+    meta["loop_active"] = True
+    meta["last_error"] = None
+    _save_meta(meta)
+    _log("background loop started")
+    try:
+        while True:
+            meta = _load_meta()
+            if not meta.get("running", False):
+                break
+            try:
+                config = load_config()
+                result = _run_bot_cycle(config)
+                meta = _load_meta()
+                meta["last_result"] = result
+                meta["last_cycle_at"] = time.time()
+                meta["last_error"] = None
+                _save_meta(meta)
+            except Exception as exc:
+                meta = _load_meta()
+                meta["last_error"] = str(exc)
+                meta["last_cycle_at"] = time.time()
+                _save_meta(meta)
+                _log(f"cycle error: {exc}")
+            await asyncio.sleep(max(5, int(load_config().get("bot_cycle_seconds", 20))))
+    finally:
+        meta = _load_meta()
+        meta["loop_active"] = False
+        _save_meta(meta)
+        _log("background loop stopped")
+
+
+async def _ensure_bot_loop_started() -> None:
+    global _BOT_TASK
+    if _BOT_TASK is None or _BOT_TASK.done():
+        _BOT_TASK = asyncio.create_task(_bot_loop())
+
+
 @app.on_event("startup")
-def _startup_reset_runtime():
+async def _startup() -> None:
     meta = _load_meta()
     if meta.get("running"):
-        meta["running"] = False
-        meta["last_error"] = None
-        _save_meta(meta)
+        await _ensure_bot_loop_started()
 
 
 @app.get("/")
@@ -197,6 +205,8 @@ def trade(req: TradeRequest):
             risk_per_trade_pct=req.risk_per_trade_pct,
             entry_price=req.entry_price,
             stop_loss=req.stop_loss,
+            take_profit=req.take_profit,
+            safe_mode=req.safe_mode,
         )
         return {"ok": True, "order": result}
     except Exception as e:
@@ -225,6 +235,8 @@ def bot_run():
         result = _run_bot_cycle(config)
         meta = _load_meta()
         meta["last_result"] = result
+        meta["last_cycle_at"] = time.time()
+        meta["last_error"] = None
         _save_meta(meta)
         return result
     except Exception as e:
@@ -232,7 +244,7 @@ def bot_run():
 
 
 @app.post("/bot/start")
-def bot_start(req: BotConfigRequest):
+async def bot_start(req: BotConfigRequest):
     try:
         config = save_config(req.model_dump())
         meta = _load_meta()
@@ -242,8 +254,8 @@ def bot_start(req: BotConfigRequest):
             "last_error": None,
         })
         _save_meta(meta)
-        _ensure_bot_thread_started()
-        return {"ok": True, "running": True, "message": "Bot started", "config": sanitize_config(config), "last_result": meta.get("last_result")}
+        await _ensure_bot_loop_started()
+        return {"ok": True, "running": True, "config": sanitize_config(config), "safe_mode": bool(config.get("safe_mode", True))}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -253,7 +265,6 @@ def bot_stop():
     meta = _load_meta()
     meta.update({"running": False, "last_stopped_at": time.time()})
     _save_meta(meta)
-    _stop_bot_thread()
     _log("bot stopped")
     return {"ok": True, "running": False, "reason": "Bot stopped"}
 
@@ -266,9 +277,11 @@ def bot_status():
     last_result = meta.get("last_result") or {}
     signal = last_result.get("signal") or last_result.get("best_signal") or {}
     order_wrap = last_result.get("order") if isinstance(last_result.get("order"), dict) else {}
+    protection = order_wrap.get("protection") if isinstance(order_wrap, dict) else None
     return {
         "ok": True,
-        "running": bool(meta.get("running", False)) and (_BOT_THREAD.is_alive() if _BOT_THREAD is not None else False),
+        "running": bool(meta.get("running", False)),
+        "loop_active": bool(meta.get("loop_active", False)),
         "hunter_enabled": bool(config.get("hunter_enabled", False)),
         "exchange": config.get("exchange"),
         "market_type": config.get("market_type", "future"),
@@ -282,12 +295,14 @@ def bot_status():
         "position_size": order_wrap.get("amount"),
         "notional_estimate": order_wrap.get("notional_estimate"),
         "applied_leverage": order_wrap.get("applied_leverage"),
+        "protection": protection,
+        "safe_mode": bool(config.get("safe_mode", True)),
+        "last_cycle_at": meta.get("last_cycle_at"),
+        "last_error": meta.get("last_error"),
         "open_positions": len((state.get("open_positions") or {})),
         "trade_count_today": state.get("trade_count_today", 0),
         "daily_pnl": state.get("daily_realized_pnl_pct", 0.0),
         "last_trade_time": state.get("last_trade_time"),
-        "last_cycle_at": meta.get("last_cycle_at"),
-        "last_error": meta.get("last_error"),
         "state": state,
     }
 
@@ -320,6 +335,7 @@ def bot_test_connection(req: BotConfigRequest | None = None):
             "markets_loaded": True,
             "balance_available": isinstance(balance, dict),
             "message": "Connection test passed",
+            "safe_mode": bool(config.get("safe_mode", True)),
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

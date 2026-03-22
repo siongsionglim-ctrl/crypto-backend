@@ -76,12 +76,16 @@ def has_open_position(symbol: str | None = None) -> bool:
 
 
 
-def register_open_position(symbol: str, side: str, amount: float, entry: float | None = None):
+def register_open_position(symbol: str, side: str, amount: float, entry: float | None = None, stop_loss: float | None = None, take_profit: float | None = None, protected: bool = False, protection_mode: str | None = None):
     state = get_state()
     state.setdefault("open_positions", {})[symbol] = {
         "side": side,
         "amount": amount,
         "entry": entry,
+        "stop_loss": stop_loss,
+        "take_profit": take_profit,
+        "protected": protected,
+        "protection_mode": protection_mode,
         "opened_at": datetime.utcnow().isoformat(),
     }
     save_state(state)
