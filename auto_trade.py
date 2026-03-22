@@ -1,6 +1,6 @@
 from engine.trading_engine import generate_signal
 from exchange_executor import place_market_order
-from risk_manager import evaluate_risk, record_trade
+from risk_manager import evaluate_risk, record_trade, register_open_position
 
 
 def normalize_side(action: str | None):
@@ -84,6 +84,7 @@ def run_auto_trade(config: dict):
     )
 
     record_trade(signal)
+    register_open_position(symbol, signal.get("action", side).upper(), float(order.get("amount") or amount), signal.get("entry") or signal.get("price"))
 
     return {
         "ok": True,

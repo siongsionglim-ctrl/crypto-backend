@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from engine.scanner_engine import scan_symbols
 from exchange_executor import place_market_order
-from risk_manager import evaluate_risk, record_trade
+from risk_manager import evaluate_risk, record_trade, register_open_position
 
 
 def normalize_side(action: str | None):
@@ -108,6 +108,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
     )
 
     record_trade(best)
+    register_open_position(best["symbol"], best.get("action", side).upper(), float(order.get("amount") or config.get("amount", 0.001)), best.get("entry") or best.get("price"))
 
     return {
         "ok": True,
