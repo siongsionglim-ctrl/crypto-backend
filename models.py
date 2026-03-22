@@ -21,6 +21,7 @@ class TradeRequest(BaseModel):
     testnet: bool = True
     market_type: str = "future"
     leverage: int = 3
+    auto_leverage: bool = True
     risk_per_trade_pct: float = 1.0
     entry_price: float | None = None
     stop_loss: float | None = None
@@ -40,6 +41,7 @@ class BotConfigRequest(BaseModel):
     timeframe: str = "1h"
     higher_timeframe: str = "4h"
     leverage: int = 3
+    auto_leverage: bool = True
     risk_per_trade_pct: float = 1.0
 
     max_daily_trades: int = 3

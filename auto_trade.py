@@ -77,6 +77,7 @@ def run_auto_trade(config: dict):
         testnet=bool(config.get("testnet", True)),
         market_type=config.get("market_type", "future"),
         leverage=int(config.get("leverage", 3)),
+        auto_leverage=bool(config.get("auto_leverage", True)),
         risk_per_trade_pct=risk_per_trade_pct,
         entry_price=signal.get("entry") or signal.get("price"),
         stop_loss=signal.get("sl"),

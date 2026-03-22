@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import ccxt
 
 
@@ -65,8 +64,7 @@ def _balance_usdt(ex) -> float:
 
 def _resolve_market(ex, market_symbol: str):
     ex.load_markets()
-    market = ex.market(market_symbol)
-    return market
+    return ex.market(market_symbol)
 
 
 def _round_amount(ex, market_symbol: str, amount: float) -> float:
@@ -76,44 +74,80 @@ def _round_amount(ex, market_symbol: str, amount: float) -> float:
     return rounded
 
 
-def _ensure_minimums(ex, market_symbol: str, amount: float, entry_price: float | None) -> float:
+def _min_notional(exchange_name: str, market: dict, market_type: str) -> float:
+    min_cost = (((market.get("limits") or {}).get("cost") or {}).get("min")) or 0.0
+    if min_cost:
+        return float(min_cost)
+    if exchange_name.lower() == "binance" and market_type == "future":
+        return 100.0
+    return 0.0
+
+
+def _ensure_minimums(ex, exchange_name: str, market_symbol: str, amount: float, entry_price: float | None, market_type: str) -> tuple[float, float]:
     market = _resolve_market(ex, market_symbol)
     min_amount = (((market.get("limits") or {}).get("amount") or {}).get("min")) or 0.0
-    min_cost = (((market.get("limits") or {}).get("cost") or {}).get("min")) or 0.0
+    min_cost = _min_notional(exchange_name, market, market_type)
 
     target = max(float(amount), float(min_amount or 0.0))
     if entry_price and min_cost:
         target = max(target, float(min_cost) / float(entry_price))
 
-    return _round_amount(ex, market_symbol, target)
+    rounded = _round_amount(ex, market_symbol, target)
+    notional = rounded * float(entry_price or 0.0)
+    return rounded, notional
 
 
-def _compute_dynamic_amount(ex, market_symbol: str, entry_price: float | None, stop_loss: float | None, risk_per_trade_pct: float, leverage: int) -> float:
+def _compute_dynamic_amount(ex, exchange_name: str, market_symbol: str, entry_price: float | None, stop_loss: float | None, risk_per_trade_pct: float, leverage: int, market_type: str, auto_leverage: bool) -> tuple[float, int, float, float]:
     balance_usdt = _balance_usdt(ex)
     if balance_usdt <= 0:
         raise ValueError("Unable to determine available USDT balance.")
 
     entry = float(entry_price or 0.0)
     stop = float(stop_loss or 0.0)
+    if entry <= 0:
+        raise ValueError("Missing entry price for dynamic sizing.")
+
+    market = _resolve_market(ex, market_symbol)
+    min_notional = _min_notional(exchange_name, market, market_type)
+    max_leverage = max(1, int(leverage or 1))
+    applied_leverage = 1 if market_type == "spot" else max_leverage
+
     risk_pct = max(0.1, float(risk_per_trade_pct)) / 100.0
     risk_amount_usdt = balance_usdt * risk_pct
-
     stop_distance = abs(entry - stop)
-    if entry <= 0 or stop_distance <= 0:
-        # fallback: size by notional share if signal misses proper SL/entry
-        raw_amount = (balance_usdt * risk_pct * max(1, leverage)) / max(entry, 1.0)
+
+    if stop_distance <= 0:
+        raw_amount = (balance_usdt * risk_pct * max(1, applied_leverage)) / entry
     else:
         raw_amount = risk_amount_usdt / stop_distance
 
-    # keep margin requirement below available balance
-    if entry > 0 and leverage > 0:
-        max_affordable_amount = (balance_usdt * 0.95 * leverage) / entry
+    if market_type == "future" and entry > 0 and applied_leverage > 0:
+        max_affordable_amount = (balance_usdt * 0.95 * applied_leverage) / entry
         raw_amount = min(raw_amount, max_affordable_amount)
 
-    amount = _ensure_minimums(ex, market_symbol, raw_amount, entry if entry > 0 else None)
+    amount, notional = _ensure_minimums(ex, exchange_name, market_symbol, raw_amount, entry, market_type)
+
+    if market_type == "future" and min_notional and notional < min_notional and auto_leverage:
+        for lev in range(max(1, applied_leverage), max_leverage + 1):
+            max_affordable_amount = (balance_usdt * 0.95 * lev) / entry
+            candidate_amount, candidate_notional = _ensure_minimums(
+                ex, exchange_name, market_symbol, min(max_affordable_amount, max(raw_amount, amount)), entry, market_type
+            )
+            if candidate_notional >= min_notional:
+                amount = candidate_amount
+                notional = candidate_notional
+                applied_leverage = lev
+                break
+
+    if market_type == "future" and min_notional and notional < min_notional:
+        raise ValueError(
+            f"Calculated notional {notional:.2f} USDT is below futures minimum {min_notional:.2f} USDT. "
+            f"Increase risk %, leverage cap, or account balance."
+        )
+
     if amount <= 0:
         raise ValueError("Order amount rounded to zero. Increase risk % or account balance.")
-    return amount
+    return amount, applied_leverage, notional, balance_usdt
 
 
 def place_market_order(
@@ -127,6 +161,7 @@ def place_market_order(
     testnet=True,
     market_type="future",
     leverage=3,
+    auto_leverage=True,
     risk_per_trade_pct: float | None = None,
     entry_price: float | None = None,
     stop_loss: float | None = None,
@@ -141,27 +176,34 @@ def place_market_order(
     )
 
     market_symbol = to_market_symbol(exchange_name, symbol)
-
-    if market_type == "future" and hasattr(ex, "set_leverage"):
-        try:
-            ex.set_leverage(int(leverage), market_symbol)
-        except Exception:
-            pass
+    requested_leverage = max(1, int(leverage or 1))
+    applied_leverage = 1 if market_type == "spot" else requested_leverage
 
     final_amount = float(amount or 0.0)
+    notional_estimate = final_amount * float(entry_price or 0.0)
+
     if risk_per_trade_pct is not None and risk_per_trade_pct > 0:
-        final_amount = _compute_dynamic_amount(
+        final_amount, applied_leverage, notional_estimate, _ = _compute_dynamic_amount(
             ex,
+            exchange_name,
             market_symbol,
             entry_price=entry_price,
             stop_loss=stop_loss,
             risk_per_trade_pct=risk_per_trade_pct,
-            leverage=leverage,
+            leverage=requested_leverage,
+            market_type=market_type,
+            auto_leverage=bool(auto_leverage),
         )
     else:
-        final_amount = _ensure_minimums(ex, market_symbol, final_amount, entry_price)
+        final_amount, notional_estimate = _ensure_minimums(ex, exchange_name, market_symbol, final_amount, entry_price, market_type)
         if final_amount <= 0:
             raise ValueError("Order amount rounded to zero. Increase amount.")
+
+    if market_type == "future" and hasattr(ex, "set_leverage"):
+        try:
+            ex.set_leverage(int(applied_leverage), market_symbol)
+        except Exception:
+            pass
 
     params = {}
     if market_type == "future" and exchange_name.lower() in {"binance", "bybit", "okx"}:
@@ -176,7 +218,14 @@ def place_market_order(
     return {
         "requested_symbol": symbol,
         "market_symbol": market_symbol,
+        "market_type": market_type,
         "amount": final_amount,
         "risk_per_trade_pct": risk_per_trade_pct,
+        "requested_leverage": requested_leverage,
+        "applied_leverage": applied_leverage,
+        "auto_leverage": bool(auto_leverage),
+        "entry_price": entry_price,
+        "stop_loss": stop_loss,
+        "notional_estimate": notional_estimate,
         "order": order,
     }

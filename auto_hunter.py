@@ -101,6 +101,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         testnet=bool(config.get("testnet", True)),
         market_type=config.get("market_type", "future"),
         leverage=int(config.get("leverage", 3)),
+        auto_leverage=bool(config.get("auto_leverage", True)),
         risk_per_trade_pct=float(config.get("risk_per_trade_pct", 1.0)),
         entry_price=best.get("entry") or best.get("price"),
         stop_loss=best.get("sl"),

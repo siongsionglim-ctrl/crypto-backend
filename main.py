@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
-import json
+
 from fastapi import FastAPI, HTTPException
 
 from models import SignalRequest, TradeRequest, BotConfigRequest, ScanRequest
@@ -23,6 +24,10 @@ _SCAN_CACHE: dict = {
 }
 
 BOT_META_FILE = Path("bot_runtime_meta.json")
+
+
+def _log(message: str) -> None:
+    print(f"[BOT] {message}", flush=True)
 
 
 def _load_meta() -> dict:
@@ -60,6 +65,7 @@ def _build_scan_params_from_config(config: dict) -> dict:
 
 
 def _run_and_cache_scan(*, symbols=None, min_confidence_pct=55.0, min_rr_ratio=1.0, limit=12, exchange="binance", timeframe="1h", market_type="future", testnet=True) -> dict:
+    _log(f"scan exchange={exchange} market={market_type} timeframe={timeframe} limit={limit}")
     result = scan_symbols(
         symbols=symbols,
         min_confidence_pct=min_confidence_pct,
@@ -85,29 +91,20 @@ def _run_and_cache_scan(*, symbols=None, min_confidence_pct=55.0, min_rr_ratio=1
     return result
 
 
-def _normalize_scan_request(req: ScanRequest) -> dict:
-    return {
-        "symbols": req.symbols,
-        "min_confidence_pct": req.min_confidence_pct,
-        "min_rr_ratio": req.min_rr_ratio,
-        "limit": req.limit,
-        "exchange": req.exchange,
-        "timeframe": req.timeframe,
-        "market_type": req.market_type,
-        "testnet": req.testnet,
-    }
-
-
 def _run_bot_cycle(config: dict) -> dict:
     if config.get("hunter_enabled", False):
         ttl = int(config.get("scan_cache_ttl_seconds", 45))
         params = _build_scan_params_from_config(config)
         if _scan_cache_fresh(ttl) and _SCAN_CACHE["params"] == params:
+            _log("using cached scan result")
             scan_result = _SCAN_CACHE["data"]
         else:
             scan_result = _run_and_cache_scan(**params)
-        return run_auto_hunter(config, scan_result=scan_result)
-    return run_auto_trade(config)
+        result = run_auto_hunter(config, scan_result=scan_result)
+    else:
+        result = run_auto_trade(config)
+    _log(f"cycle result mode={result.get('mode')} reason={result.get('reason')}")
+    return result
 
 
 @app.get("/")
@@ -140,6 +137,7 @@ def trade(req: TradeRequest):
             testnet=req.testnet,
             market_type=req.market_type,
             leverage=req.leverage,
+            auto_leverage=req.auto_leverage,
             risk_per_trade_pct=req.risk_per_trade_pct,
             entry_price=req.entry_price,
             stop_loss=req.stop_loss,
@@ -199,6 +197,7 @@ def bot_stop():
     meta = _load_meta()
     meta.update({"running": False, "last_stopped_at": time.time()})
     _save_meta(meta)
+    _log("bot stopped")
     return {"ok": True, "running": False, "reason": "Bot stopped"}
 
 
@@ -209,16 +208,23 @@ def bot_status():
     config = load_config()
     last_result = meta.get("last_result") or {}
     signal = last_result.get("signal") or last_result.get("best_signal") or {}
+    order_wrap = last_result.get("order") if isinstance(last_result.get("order"), dict) else {}
     return {
         "ok": True,
         "running": bool(meta.get("running", False)),
         "hunter_enabled": bool(config.get("hunter_enabled", False)),
         "exchange": config.get("exchange"),
+        "market_type": config.get("market_type", "future"),
+        "timeframe": config.get("timeframe", "1h"),
+        "scan_timeframe": config.get("scan_timeframe") or config.get("timeframe", "1h"),
         "symbol": signal.get("symbol") or config.get("symbol"),
         "action": signal.get("action"),
         "confidence_pct": signal.get("confidence_pct"),
         "last_result": last_result,
-        "last_trade": (last_result.get("order") or {}).get("order") if isinstance(last_result.get("order"), dict) else last_result.get("order"),
+        "last_trade": order_wrap.get("order") or last_result.get("order"),
+        "position_size": order_wrap.get("amount"),
+        "notional_estimate": order_wrap.get("notional_estimate"),
+        "applied_leverage": order_wrap.get("applied_leverage"),
         "open_positions": len((state.get("open_positions") or {})),
         "trade_count_today": state.get("trade_count_today", 0),
         "daily_pnl": state.get("daily_realized_pnl_pct", 0.0),
@@ -240,12 +246,11 @@ def bot_test_connection(req: BotConfigRequest | None = None):
             market_type=config.get("market_type", "future"),
         )
         ex.load_markets()
+        balance = None
         try:
             balance = ex.fetch_balance()
-            has_balance = isinstance(balance, dict)
         except Exception:
-            balance = None
-            has_balance = False
+            pass
 
         return {
             "ok": True,
@@ -254,7 +259,7 @@ def bot_test_connection(req: BotConfigRequest | None = None):
             "market_type": config.get("market_type", "future"),
             "testnet": bool(config.get("testnet", True)),
             "markets_loaded": True,
-            "balance_available": has_balance,
+            "balance_available": isinstance(balance, dict),
             "message": "Connection test passed",
         }
     except Exception as e:
@@ -268,7 +273,16 @@ def bot_state():
 
 @app.post("/scan")
 def scan(req: ScanRequest):
-    params = _normalize_scan_request(req)
+    params = {
+        "symbols": req.symbols,
+        "min_confidence_pct": req.min_confidence_pct,
+        "min_rr_ratio": req.min_rr_ratio,
+        "limit": req.limit,
+        "exchange": req.exchange,
+        "timeframe": req.timeframe,
+        "market_type": req.market_type,
+        "testnet": req.testnet,
+    }
     if not req.force_refresh and _scan_cache_fresh() and _SCAN_CACHE["params"] == params:
         result = _SCAN_CACHE["data"]
     else:
