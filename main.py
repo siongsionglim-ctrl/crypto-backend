@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from pathlib import Path
@@ -25,8 +24,6 @@ _SCAN_CACHE: dict = {
 }
 
 BOT_META_FILE = Path("bot_runtime_meta.json")
-_BOT_TASK: asyncio.Task | None = None
-_BOT_LAST_HEARTBEAT: float | None = None
 
 
 def _log(message: str) -> None:
@@ -35,30 +32,12 @@ def _log(message: str) -> None:
 
 def _load_meta() -> dict:
     if not BOT_META_FILE.exists():
-        return {
-            "running": False,
-            "loop_active": False,
-            "last_result": None,
-            "last_started_at": None,
-            "last_stopped_at": None,
-            "last_cycle_at": None,
-            "last_error": None,
-            "bot_cycle_seconds": 5,
-        }
+        return {"running": False, "last_result": None, "last_started_at": None, "last_stopped_at": None}
     try:
         raw = json.loads(BOT_META_FILE.read_text(encoding="utf-8"))
     except Exception:
         raw = {}
-    base = {
-        "running": False,
-        "loop_active": False,
-        "last_result": None,
-        "last_started_at": None,
-        "last_stopped_at": None,
-        "last_cycle_at": None,
-        "last_error": None,
-        "bot_cycle_seconds": 5,
-    }
+    base = {"running": False, "last_result": None, "last_started_at": None, "last_stopped_at": None}
     base.update(raw or {})
     return base
 
@@ -68,24 +47,24 @@ def _save_meta(data: dict) -> dict:
     return data
 
 
-def _scan_cache_fresh(ttl_seconds: int = 20) -> bool:
+def _scan_cache_fresh(ttl_seconds: int = 45) -> bool:
     return _SCAN_CACHE["data"] is not None and (time.time() - _SCAN_CACHE["created_at"] <= ttl_seconds)
 
 
 def _build_scan_params_from_config(config: dict) -> dict:
     return {
         "symbols": config.get("scan_symbols"),
-        "min_confidence_pct": float(config.get("min_confidence_pct", 50.0)),
-        "min_rr_ratio": float(config.get("min_rr_ratio", 1.2)),
-        "limit": int(config.get("scan_limit", 20)),
+        "min_confidence_pct": float(config.get("min_confidence_pct", 55.0)),
+        "min_rr_ratio": float(config.get("min_rr_ratio", 1.0)),
+        "limit": int(config.get("scan_limit", 12)),
         "exchange": config.get("scan_exchange") or config.get("exchange", "binance"),
-        "timeframe": config.get("scan_timeframe") or config.get("timeframe", "1m"),
+        "timeframe": config.get("scan_timeframe") or config.get("timeframe", "1h"),
         "market_type": config.get("scan_market_type") or config.get("market_type", "future"),
         "testnet": bool(config.get("testnet", True)),
     }
 
 
-def _run_and_cache_scan(*, symbols=None, min_confidence_pct=50.0, min_rr_ratio=1.2, limit=20, exchange="binance", timeframe="1m", market_type="future", testnet=True) -> dict:
+def _run_and_cache_scan(*, symbols=None, min_confidence_pct=55.0, min_rr_ratio=1.0, limit=12, exchange="binance", timeframe="1h", market_type="future", testnet=True) -> dict:
     _log(f"scan exchange={exchange} market={market_type} timeframe={timeframe} limit={limit}")
     result = scan_symbols(
         symbols=symbols,
@@ -114,7 +93,7 @@ def _run_and_cache_scan(*, symbols=None, min_confidence_pct=50.0, min_rr_ratio=1
 
 def _run_bot_cycle(config: dict) -> dict:
     if config.get("hunter_enabled", False):
-        ttl = int(config.get("scan_cache_ttl_seconds", 12))
+        ttl = int(config.get("scan_cache_ttl_seconds", 45))
         params = _build_scan_params_from_config(config)
         if _scan_cache_fresh(ttl) and _SCAN_CACHE["params"] == params:
             _log("using cached scan result")
@@ -126,70 +105,6 @@ def _run_bot_cycle(config: dict) -> dict:
         result = run_auto_trade(config)
     _log(f"cycle result mode={result.get('mode')} reason={result.get('reason')}")
     return result
-
-
-def _compute_cycle_seconds(config: dict) -> int:
-    if config.get("bot_cycle_seconds"):
-        return max(2, int(config.get("bot_cycle_seconds", 5)))
-    tf = str(config.get("scan_timeframe") or config.get("timeframe") or "1m").lower()
-    mapping = {
-        "1m": 3,
-        "3m": 4,
-        "5m": 5,
-        "15m": 8,
-        "30m": 10,
-        "1h": 15,
-        "4h": 30,
-        "1d": 60,
-    }
-    return mapping.get(tf, 5)
-
-
-async def _bot_loop() -> None:
-    global _BOT_LAST_HEARTBEAT
-    _log("background loop started")
-    while True:
-        meta = _load_meta()
-        if not meta.get("running"):
-            meta["loop_active"] = False
-            _save_meta(meta)
-            _log("background loop exiting")
-            return
-        try:
-            config = load_config()
-            _BOT_LAST_HEARTBEAT = time.time()
-            result = _run_bot_cycle(config)
-            meta = _load_meta()
-            meta.update({
-                "running": True,
-                "loop_active": True,
-                "last_result": result,
-                "last_cycle_at": time.time(),
-                "last_error": None,
-                "bot_cycle_seconds": _compute_cycle_seconds(config),
-            })
-            _save_meta(meta)
-        except Exception as e:
-            meta = _load_meta()
-            meta.update({
-                "running": True,
-                "loop_active": True,
-                "last_cycle_at": time.time(),
-                "last_error": str(e),
-            })
-            _save_meta(meta)
-            _log(f"cycle error: {e}")
-        await asyncio.sleep(_compute_cycle_seconds(load_config()))
-
-
-@app.on_event("startup")
-async def _startup() -> None:
-    meta = _load_meta()
-    if meta.get("running"):
-        global _BOT_TASK
-        if _BOT_TASK is None or _BOT_TASK.done():
-            _BOT_TASK = asyncio.create_task(_bot_loop())
-            _log("restored background loop on startup")
 
 
 @app.get("/")
@@ -254,7 +169,6 @@ def bot_run():
         result = _run_bot_cycle(config)
         meta = _load_meta()
         meta["last_result"] = result
-        meta["last_cycle_at"] = time.time()
         _save_meta(meta)
         return result
     except Exception as e:
@@ -262,22 +176,18 @@ def bot_run():
 
 
 @app.post("/bot/start")
-async def bot_start(req: BotConfigRequest):
-    global _BOT_TASK
+def bot_start(req: BotConfigRequest):
     try:
         config = save_config(req.model_dump())
+        result = _run_bot_cycle(config)
         meta = _load_meta()
         meta.update({
             "running": True,
-            "loop_active": True,
             "last_started_at": time.time(),
-            "last_error": None,
-            "bot_cycle_seconds": _compute_cycle_seconds(config),
+            "last_result": result,
         })
         _save_meta(meta)
-        if _BOT_TASK is None or _BOT_TASK.done():
-            _BOT_TASK = asyncio.create_task(_bot_loop())
-        return {"ok": True, "running": True, "config": sanitize_config(config), "bot_cycle_seconds": _compute_cycle_seconds(config)}
+        return {"ok": True, "running": True, "result": result, "config": sanitize_config(config)}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -285,7 +195,7 @@ async def bot_start(req: BotConfigRequest):
 @app.post("/bot/stop")
 def bot_stop():
     meta = _load_meta()
-    meta.update({"running": False, "loop_active": False, "last_stopped_at": time.time()})
+    meta.update({"running": False, "last_stopped_at": time.time()})
     _save_meta(meta)
     _log("bot stopped")
     return {"ok": True, "running": False, "reason": "Bot stopped"}
@@ -302,41 +212,86 @@ def bot_status():
     return {
         "ok": True,
         "running": bool(meta.get("running", False)),
-        "loop_active": bool(meta.get("loop_active", False)),
         "hunter_enabled": bool(config.get("hunter_enabled", False)),
         "exchange": config.get("exchange"),
         "market_type": config.get("market_type", "future"),
         "timeframe": config.get("timeframe", "1h"),
         "scan_timeframe": config.get("scan_timeframe") or config.get("timeframe", "1h"),
         "symbol": signal.get("symbol") or config.get("symbol"),
-        "scan_limit": int(config.get("scan_limit", 12)),
-        "scan_symbols": config.get("scan_symbols") or [],
-        "bot_cycle_seconds": meta.get("bot_cycle_seconds") or _compute_cycle_seconds(config),
-        "last_cycle_at": meta.get("last_cycle_at"),
-        "last_error": meta.get("last_error"),
-        "heartbeat_age_seconds": None if _BOT_LAST_HEARTBEAT is None else round(time.time() - _BOT_LAST_HEARTBEAT, 1),
-        "trade_count_today": int(state.get("trade_count_today", 0)),
+        "action": signal.get("action"),
+        "confidence_pct": signal.get("confidence_pct"),
+        "last_result": last_result,
+        "last_trade": order_wrap.get("order") or last_result.get("order"),
+        "position_size": order_wrap.get("amount"),
+        "notional_estimate": order_wrap.get("notional_estimate"),
+        "applied_leverage": order_wrap.get("applied_leverage"),
+        "open_positions": len((state.get("open_positions") or {})),
+        "trade_count_today": state.get("trade_count_today", 0),
+        "daily_pnl": state.get("daily_realized_pnl_pct", 0.0),
         "last_trade_time": state.get("last_trade_time"),
-        "open_positions": state.get("open_positions", {}),
-        "last_reason": last_result.get("reason"),
-        "last_mode": last_result.get("mode"),
-        "last_order": order_wrap,
-        "last_signal": signal,
+        "state": state,
     }
 
 
 @app.post("/bot/test-connection")
-def bot_test_connection(req: BotConfigRequest):
+def bot_test_connection(req: BotConfigRequest | None = None):
+    config = req.model_dump() if req is not None else load_config()
+    exchange_name = config.get("exchange", "binance")
+    market_type = config.get("market_type", "future")
+    testnet = bool(config.get("testnet", True))
+    api_key = (config.get("api_key") or "").strip()
+    secret = (config.get("secret") or "").strip()
+    passphrase = config.get("passphrase")
+
+    if not api_key or not secret:
+        return {
+            "ok": True,
+            "success": True,
+            "exchange": exchange_name,
+            "market_type": market_type,
+            "testnet": testnet,
+            "credentials_present": False,
+            "message": "Signal-only mode: credentials not provided, skipped private connection test",
+        }
+
     try:
-        ex = place_market_order  # keep import used
-        client = build_exchange(req.exchange, req.api_key, req.secret, req.passphrase, req.testnet, req.market_type)  # type: ignore[name-defined]
-        if hasattr(client, "fetch_balance"):
-            bal = client.fetch_balance()
-        else:
-            bal = {"ok": True}
-        return {"ok": True, "message": "Connection successful", "sample": str(bal)[:500]}
+        ex = build_exchange(
+            exchange_name=exchange_name,
+            api_key=api_key,
+            secret=secret,
+            passphrase=passphrase,
+            testnet=testnet,
+            market_type=market_type,
+        )
+
+        # Avoid heavy public REST calls like load_markets() during connection tests.
+        # On Binance these repeated public requests can trigger HTTP 418 bans.
+        balance = ex.fetch_balance()
+
+        return {
+            "ok": True,
+            "success": True,
+            "exchange": exchange_name,
+            "market_type": market_type,
+            "testnet": testnet,
+            "credentials_present": True,
+            "balance_available": isinstance(balance, dict),
+            "message": "Connection test passed",
+        }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        msg = str(e)
+        if "418" in msg and exchange_name.lower() == "binance":
+            msg = (
+                "Binance temporarily blocked REST market-data requests from this server (HTTP 418). "
+                "Wait for the ban window to expire, avoid repeated Test Connection taps, and use private-only checks for auth. "
+                f"Original error: {msg}"
+            )
+        raise HTTPException(status_code=400, detail=msg)
+
+
+@app.get("/bot/state")
+def bot_state():
+    return {"ok": True, "state": get_state()}
 
 
 @app.post("/scan")
@@ -351,7 +306,21 @@ def scan(req: ScanRequest):
         "market_type": req.market_type,
         "testnet": req.testnet,
     }
-    if not req.force_refresh and _scan_cache_fresh(int(load_config().get("scan_cache_ttl_seconds", 12))) and _SCAN_CACHE["params"] == params:
-        _log("scan request served from cache")
-        return _SCAN_CACHE["data"]
-    return _run_and_cache_scan(**params)
+    if not req.force_refresh and _scan_cache_fresh() and _SCAN_CACHE["params"] == params:
+        result = _SCAN_CACHE["data"]
+    else:
+        result = _run_and_cache_scan(**params)
+    return result
+
+
+@app.get("/scan/latest")
+def scan_latest():
+    if not _SCAN_CACHE["data"]:
+        return {"ok": True, "has_cache": False, "result": None}
+    return {
+        "ok": True,
+        "has_cache": True,
+        "cached_at": _SCAN_CACHE["created_at"],
+        "params": _SCAN_CACHE["params"],
+        "result": _SCAN_CACHE["data"],
+    }
