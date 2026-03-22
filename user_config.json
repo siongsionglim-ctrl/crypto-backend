@@ -1,0 +1,18 @@
+{
+  "exchange": "binance",
+  "symbol": "BTCUSDT",
+  "api_key": "XbEun03utwrPDOaeGv6yLOcD5vdKGwkBu4LKkxKF7diNPPa0SWgahbZvMpMOjbqi",
+  "secret": "vIn6tTPtahWEuuJMru4uwongrRLb6ow8Q2Swhh19I7InMD7gzoxKPix1rIGkLAJl",
+  "passphrase": null,
+  "auto_trade": true,
+  "amount": 0.001,
+  "testnet": true,
+  "max_daily_trades": 3,
+  "min_confidence_pct": 70.0,
+  "min_rr_ratio": 1.5,
+  "cooldown_minutes": 15,
+  "allowed_sides": [
+    "BUY",
+    "SELL"
+  ]
+}
