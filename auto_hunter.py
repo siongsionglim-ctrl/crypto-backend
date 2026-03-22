@@ -16,7 +16,7 @@ def normalize_side(action: str | None):
     return None
 
 
-def run_auto_hunter(config: dict):
+def run_auto_hunter(config: dict, scan_result: dict | None = None):
     symbols = config.get("scan_symbols") or [
         "BTCUSDT",
         "ETHUSDT",
@@ -26,12 +26,13 @@ def run_auto_hunter(config: dict):
         "SUIUSDT",
     ]
 
-    scan_result = scan_symbols(
-        symbols=symbols,
-        min_confidence_pct=float(config.get("min_confidence_pct", 60.0)),
-        min_rr_ratio=float(config.get("min_rr_ratio", 1.2)),
-        limit=int(config.get("scan_limit", 5)),
-    )
+    if scan_result is None:
+        scan_result = scan_symbols(
+            symbols=symbols,
+            min_confidence_pct=float(config.get("min_confidence_pct", 60.0)),
+            min_rr_ratio=float(config.get("min_rr_ratio", 1.2)),
+            limit=int(config.get("scan_limit", 12)),
+        )
 
     top = scan_result.get("top", [])
     if not top:
@@ -82,7 +83,6 @@ def run_auto_hunter(config: dict):
             "reason": "Auto trade disabled",
         }
 
-    risk_per_trade_pct = float(config.get("risk_per_trade_pct", 1.0))
     order = place_market_order(
         exchange_name=config["exchange"],
         api_key=config["api_key"],
@@ -92,11 +92,6 @@ def run_auto_hunter(config: dict):
         side=side,
         amount=float(config.get("amount", 0.001)),
         testnet=bool(config.get("testnet", True)),
-        market_type=config.get("market_type", "future"),
-        leverage=int(config.get("leverage", 3)),
-        risk_per_trade_pct=risk_per_trade_pct,
-        entry_price=best.get("entry") or best.get("price"),
-        stop_loss=best.get("sl"),
     )
 
     record_trade()
@@ -107,5 +102,5 @@ def run_auto_hunter(config: dict):
         "best_signal": best,
         "scan_result": scan_result,
         "order": order,
-        "reason": f"Auto Hunter trade executed with dynamic sizing ({risk_per_trade_pct}% risk)",
+        "reason": "Auto Hunter trade executed",
     }

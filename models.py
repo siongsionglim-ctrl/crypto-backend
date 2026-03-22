@@ -15,30 +15,17 @@ class TradeRequest(BaseModel):
     side: str | None = None
     amount: float = 0.001
     testnet: bool = True
-    market_type: str = "future"
-    leverage: int = 3
-    risk_per_trade_pct: float = 1.0
-
-
-class ScanRequest(BaseModel):
-    symbols: list[str] | None = None
-    min_confidence_pct: float = 55.0
-    min_rr_ratio: float = 1.0
-    limit: int = 10
 
 
 class BotConfigRequest(BaseModel):
     exchange: str
     symbol: str
-    api_key: str = ""
-    secret: str = ""
+    api_key: str
+    secret: str
     passphrase: str | None = None
     auto_trade: bool = False
     amount: float = 0.001
     testnet: bool = True
-    market_type: str = "future"
-    leverage: int = 3
-    risk_per_trade_pct: float = Field(default=1.0, ge=0.1, le=100.0)
 
     max_daily_trades: int = 3
     min_confidence_pct: float = 70.0
@@ -53,6 +40,24 @@ class BotConfigRequest(BaseModel):
         "SOLUSDT",
         "XRPUSDT",
         "BNBUSDT",
+        "DOGEUSDT",
+        "ADAUSDT",
+        "AVAXUSDT",
+        "LINKUSDT",
+        "DOTUSDT",
         "SUIUSDT",
+        "TRXUSDT",
+        "LTCUSDT",
+        "BCHUSDT",
+        "APTUSDT",
     ]
-    scan_limit: int = 5
+    scan_limit: int = 12
+    scan_cache_ttl_seconds: int = 45
+
+
+class ScanRequest(BaseModel):
+    symbols: list[str] | None = None
+    min_confidence_pct: float = 55.0
+    min_rr_ratio: float = 1.0
+    limit: int = Field(default=12, ge=1, le=100)
+    force_refresh: bool = False
