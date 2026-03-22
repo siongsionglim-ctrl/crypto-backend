@@ -1,197 +1,182 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Optional
 import ccxt
 
 
-class ExchangeExecutionError(RuntimeError):
-    pass
+def build_exchange(exchange_name, api_key, secret, passphrase=None, testnet=True, market_type="future"):
+    name = exchange_name.lower()
+    default_type = "future" if market_type == "future" else "spot"
 
-
-
-def build_exchange(exchange_name: str, api_key: str, secret: str, passphrase: str | None = None, testnet: bool = True, market_type: str = "future"):
-    name = exchange_name.lower().strip()
-    market_type = market_type.lower().strip()
-    options = {"defaultType": "swap" if market_type == "future" else "spot"}
+    common = {
+        "apiKey": api_key,
+        "secret": secret,
+        "enableRateLimit": True,
+        "options": {"defaultType": default_type},
+    }
 
     if name == "binance":
-        ex = ccxt.binance({"apiKey": api_key, "secret": secret, "enableRateLimit": True, "options": options})
+        ex = ccxt.binance(common)
         if testnet:
             ex.set_sandbox_mode(True)
         return ex
 
     if name == "bybit":
-        ex = ccxt.bybit({"apiKey": api_key, "secret": secret, "enableRateLimit": True, "options": options})
+        ex = ccxt.bybit(common)
         if testnet:
             ex.set_sandbox_mode(True)
         return ex
 
     if name == "okx":
-        ex = ccxt.okx({"apiKey": api_key, "secret": secret, "password": passphrase or "", "enableRateLimit": True, "options": options})
+        common["password"] = passphrase or ""
+        ex = ccxt.okx(common)
         if testnet:
             ex.set_sandbox_mode(True)
         return ex
 
-    raise ExchangeExecutionError(f"Unsupported exchange: {exchange_name}")
+    raise ValueError(f"Unsupported exchange: {exchange_name}")
 
 
-
-def to_market_symbol(exchange_name: str, symbol: str, market_type: str = "future") -> str:
-    name = exchange_name.lower().strip()
-    market_type = market_type.lower().strip()
-
-    if name in {"binance", "bybit"}:
-        if symbol.endswith("USDT"):
-            base = symbol[:-4]
-            return f"{base}/USDT:USDT" if market_type == "future" else f"{base}/USDT"
-        if symbol.endswith("USDC"):
-            base = symbol[:-4]
-            return f"{base}/USDC:USDC" if market_type == "future" else f"{base}/USDC"
-
-    if name == "okx":
-        if symbol.endswith("USDT"):
-            base = symbol[:-4]
-            return f"{base}/USDT:USDT" if market_type == "future" else f"{base}/USDT"
-
+def to_market_symbol(exchange_name: str, symbol: str) -> str:
+    if symbol.endswith("USDT"):
+        base = symbol[:-4]
+        quote = "USDT"
+        return f"{base}/{quote}"
+    if symbol.endswith("USDC"):
+        base = symbol[:-4]
+        quote = "USDC"
+        return f"{base}/{quote}"
     return symbol
 
 
+def _balance_usdt(ex) -> float:
+    balance = ex.fetch_balance()
+    for bucket in ("free", "total"):
+        data = balance.get(bucket)
+        if isinstance(data, dict):
+            value = data.get("USDT")
+            if value is not None:
+                return float(value)
+    usdt = balance.get("USDT")
+    if isinstance(usdt, dict):
+        return float(usdt.get("free") or usdt.get("total") or 0.0)
+    return 0.0
+
+
+def _resolve_market(ex, market_symbol: str):
+    ex.load_markets()
+    market = ex.market(market_symbol)
+    return market
+
 
 def _round_amount(ex, market_symbol: str, amount: float) -> float:
-    try:
-        ex.load_markets()
-        precision = ex.markets[market_symbol].get("precision", {}).get("amount")
-        if precision is None:
-            return amount
-        factor = 10 ** int(precision)
-        return math.floor(amount * factor) / factor
-    except Exception:
-        return amount
+    rounded = float(ex.amount_to_precision(market_symbol, amount))
+    if rounded < 0:
+        rounded = 0.0
+    return rounded
 
 
+def _ensure_minimums(ex, market_symbol: str, amount: float, entry_price: float | None) -> float:
+    market = _resolve_market(ex, market_symbol)
+    min_amount = (((market.get("limits") or {}).get("amount") or {}).get("min")) or 0.0
+    min_cost = (((market.get("limits") or {}).get("cost") or {}).get("min")) or 0.0
 
-def _set_leverage_if_supported(ex, market_symbol: str, leverage: int):
-    try:
-        ex.set_leverage(leverage, market_symbol)
-    except Exception:
-        pass
+    target = max(float(amount), float(min_amount or 0.0))
+    if entry_price and min_cost:
+        target = max(target, float(min_cost) / float(entry_price))
+
+    return _round_amount(ex, market_symbol, target)
 
 
+def _compute_dynamic_amount(ex, market_symbol: str, entry_price: float | None, stop_loss: float | None, risk_per_trade_pct: float, leverage: int) -> float:
+    balance_usdt = _balance_usdt(ex)
+    if balance_usdt <= 0:
+        raise ValueError("Unable to determine available USDT balance.")
 
-def _stop_side(side: str) -> str:
-    return "sell" if side.lower() == "buy" else "buy"
+    entry = float(entry_price or 0.0)
+    stop = float(stop_loss or 0.0)
+    risk_pct = max(0.1, float(risk_per_trade_pct)) / 100.0
+    risk_amount_usdt = balance_usdt * risk_pct
 
+    stop_distance = abs(entry - stop)
+    if entry <= 0 or stop_distance <= 0:
+        # fallback: size by notional share if signal misses proper SL/entry
+        raw_amount = (balance_usdt * risk_pct * max(1, leverage)) / max(entry, 1.0)
+    else:
+        raw_amount = risk_amount_usdt / stop_distance
+
+    # keep margin requirement below available balance
+    if entry > 0 and leverage > 0:
+        max_affordable_amount = (balance_usdt * 0.95 * leverage) / entry
+        raw_amount = min(raw_amount, max_affordable_amount)
+
+    amount = _ensure_minimums(ex, market_symbol, raw_amount, entry if entry > 0 else None)
+    if amount <= 0:
+        raise ValueError("Order amount rounded to zero. Increase risk % or account balance.")
+    return amount
 
 
 def place_market_order(
-    exchange_name: str,
-    api_key: str,
-    secret: str,
-    symbol: str,
-    side: str,
-    amount: float,
-    passphrase: str | None = None,
-    testnet: bool = True,
-    market_type: str = "future",
-    leverage: int = 3,
-    reduce_only: bool = False,
+    exchange_name,
+    api_key,
+    secret,
+    symbol,
+    side,
+    amount=None,
+    passphrase=None,
+    testnet=True,
+    market_type="future",
+    leverage=3,
+    risk_per_trade_pct: float | None = None,
+    entry_price: float | None = None,
+    stop_loss: float | None = None,
 ):
-    ex = build_exchange(exchange_name, api_key, secret, passphrase=passphrase, testnet=testnet, market_type=market_type)
-    market_symbol = to_market_symbol(exchange_name, symbol, market_type=market_type)
-    amount = _round_amount(ex, market_symbol, amount)
-    if amount <= 0:
-        raise ExchangeExecutionError("Order amount rounded to zero. Increase amount.")
-
-    if market_type == "future":
-        _set_leverage_if_supported(ex, market_symbol, leverage)
-
-    params: dict[str, Any] = {}
-    if reduce_only and market_type == "future":
-        params["reduceOnly"] = True
-
-    return ex.create_market_order(symbol=market_symbol, side=side.lower(), amount=amount, params=params)
-
-
-
-def place_protective_orders(
-    exchange_name: str,
-    api_key: str,
-    secret: str,
-    symbol: str,
-    side: str,
-    amount: float,
-    stop_loss: Optional[float],
-    take_profit: Optional[float],
-    passphrase: str | None = None,
-    testnet: bool = True,
-    market_type: str = "future",
-    leverage: int = 3,
-):
-    if market_type != "future":
-        return []
-
-    ex = build_exchange(exchange_name, api_key, secret, passphrase=passphrase, testnet=testnet, market_type=market_type)
-    market_symbol = to_market_symbol(exchange_name, symbol, market_type=market_type)
-    amount = _round_amount(ex, market_symbol, amount)
-    if amount <= 0:
-        return []
-    _set_leverage_if_supported(ex, market_symbol, leverage)
-
-    exit_side = _stop_side(side)
-    created = []
-    if stop_loss:
-        try:
-            created.append(ex.create_order(market_symbol, "stop_market", exit_side, amount, None, {"stopPrice": stop_loss, "reduceOnly": True, "triggerPrice": stop_loss}))
-        except Exception as e:
-            created.append({"warning": f"stop_loss_failed: {e}"})
-    if take_profit:
-        try:
-            created.append(ex.create_order(market_symbol, "take_profit_market", exit_side, amount, None, {"stopPrice": take_profit, "reduceOnly": True, "triggerPrice": take_profit}))
-        except Exception as e:
-            created.append({"warning": f"take_profit_failed: {e}"})
-    return created
-
-
-
-def execute_trade_bundle(
-    exchange_name: str,
-    api_key: str,
-    secret: str,
-    symbol: str,
-    side: str,
-    amount: float,
-    stop_loss: Optional[float] = None,
-    take_profit: Optional[float] = None,
-    passphrase: str | None = None,
-    testnet: bool = True,
-    market_type: str = "future",
-    leverage: int = 3,
-):
-    entry = place_market_order(
+    ex = build_exchange(
         exchange_name=exchange_name,
         api_key=api_key,
         secret=secret,
         passphrase=passphrase,
-        symbol=symbol,
-        side=side,
-        amount=amount,
         testnet=testnet,
         market_type=market_type,
-        leverage=leverage,
     )
-    protective = place_protective_orders(
-        exchange_name=exchange_name,
-        api_key=api_key,
-        secret=secret,
-        passphrase=passphrase,
-        symbol=symbol,
-        side=side,
-        amount=amount,
-        stop_loss=stop_loss,
-        take_profit=take_profit,
-        testnet=testnet,
-        market_type=market_type,
-        leverage=leverage,
+
+    market_symbol = to_market_symbol(exchange_name, symbol)
+
+    if market_type == "future" and hasattr(ex, "set_leverage"):
+        try:
+            ex.set_leverage(int(leverage), market_symbol)
+        except Exception:
+            pass
+
+    final_amount = float(amount or 0.0)
+    if risk_per_trade_pct is not None and risk_per_trade_pct > 0:
+        final_amount = _compute_dynamic_amount(
+            ex,
+            market_symbol,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            risk_per_trade_pct=risk_per_trade_pct,
+            leverage=leverage,
+        )
+    else:
+        final_amount = _ensure_minimums(ex, market_symbol, final_amount, entry_price)
+        if final_amount <= 0:
+            raise ValueError("Order amount rounded to zero. Increase amount.")
+
+    params = {}
+    if market_type == "future" and exchange_name.lower() in {"binance", "bybit", "okx"}:
+        params.update({"reduceOnly": False})
+
+    order = ex.create_market_order(
+        symbol=market_symbol,
+        side=side.lower(),
+        amount=final_amount,
+        params=params,
     )
-    return {"entry_order": entry, "protective_orders": protective}
+    return {
+        "requested_symbol": symbol,
+        "market_symbol": market_symbol,
+        "amount": final_amount,
+        "risk_per_trade_pct": risk_per_trade_pct,
+        "order": order,
+    }
