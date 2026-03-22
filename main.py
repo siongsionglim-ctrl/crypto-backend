@@ -150,3 +150,47 @@ def scan(req: ScanRequest):
         market_type=req.market_type,
         testnet=req.testnet,
     )
+
+@app.post("/bot/test-connection")
+def test_bot_connection():
+    config = load_config()
+    if not config:
+        raise HTTPException(status_code=400, detail="Bot config not found")
+
+    api_key = config.get("api_key", "")
+    secret = config.get("secret", "")
+    exchange = config.get("exchange", "binance")
+    testnet = config.get("testnet", True)
+
+    if not api_key or not secret:
+        raise HTTPException(status_code=400, detail="API key / secret missing")
+
+    try:
+        import ccxt
+
+        exchange_name = exchange.lower()
+        if not hasattr(ccxt, exchange_name):
+            raise HTTPException(status_code=400, detail=f"Unsupported exchange: {exchange}")
+
+        ex_class = getattr(ccxt, exchange_name)
+        ex = ex_class({
+            "apiKey": api_key,
+            "secret": secret,
+            "enableRateLimit": True,
+            "options": {"defaultType": "future"},
+        })
+
+        if exchange_name == "binance" and testnet:
+            ex.set_sandbox_mode(True)
+
+        balance = ex.fetch_balance()
+
+        return {
+            "ok": True,
+            "message": "Connection successful",
+            "exchange": exchange,
+            "testnet": testnet,
+            "has_balance": balance is not None,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

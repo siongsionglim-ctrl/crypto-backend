@@ -1,5 +1,11 @@
 {
   "trade_count_today": 0,
   "last_trade_time": null,
-  "last_trade_day": "2026-03-22"
+  "last_trade_day": "2026-03-22",
+  "daily_realized_pnl_pct": 0.0,
+  "consecutive_losses": 0,
+  "open_positions": {},
+  "last_signal_symbol": null,
+  "last_signal_action": null,
+  "last_run_time": null
 }
