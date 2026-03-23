@@ -43,28 +43,23 @@ def rank_score(signal: Dict[str, Any]) -> float:
     breakdown = _safe_float(signal.get("breakdown_probability_pct"))
     bounce = _safe_float(signal.get("bounce_probability_pct"))
     volume_ratio = _safe_float(signal.get("volume_ratio"), 1.0)
-
     dominant_prob = max(breakout, breakdown, bounce)
-
     if action == "HOLD":
         return -999.0 + confidence * 0.01
-
     score = 0.0
     score += confidence * 0.45
     score += trend * 0.20
     score += dominant_prob * 0.20
     score += min(rr, 4.0) * 10.0
     score += min(volume_ratio, 3.0) * 3.0
-
     if action == "BUY" and breakout >= breakdown:
         score += 8.0
     if action == "SELL" and breakdown >= breakout:
         score += 8.0
-
     if rr < 1.2:
         score -= 12.0
-
     return round(score, 4)
+
 
 
 def scan_symbols(
@@ -73,12 +68,12 @@ def scan_symbols(
     min_rr_ratio: float = 1.0,
     limit: int = 12,
     exchange: str = "binance",
-    timeframe: str = "1h",
+    timeframe: str = "1m",
     market_type: str = "future",
-    testnet: bool = True,
+    testnet: bool = False,
+    websocket_enabled: bool = True,
 ) -> Dict[str, Any]:
     symbols = symbols or DEFAULT_SCAN_SYMBOLS
-
     results = []
     errors = []
 
@@ -90,6 +85,7 @@ def scan_symbols(
                 timeframe=timeframe,
                 market_type=market_type,
                 testnet=testnet,
+                websocket_enabled=websocket_enabled,
             )
             if not candles:
                 errors.append({"symbol": symbol, "reason": "No data"})
@@ -101,8 +97,8 @@ def scan_symbols(
                 timeframe=timeframe,
                 market_type=market_type,
                 testnet=testnet,
+                websocket_enabled=websocket_enabled,
             )
-
             if signal.get("error"):
                 errors.append({"symbol": symbol, "reason": signal["error"]})
                 continue
@@ -110,32 +106,21 @@ def scan_symbols(
             confidence = _safe_float(signal.get("confidence_pct"))
             rr = _safe_float(signal.get("rr_ratio"))
             action = str(signal.get("action", "HOLD")).upper()
-
-            qualifies = (
-                action in ("BUY", "SELL")
-                and confidence >= min_confidence_pct
-                and rr >= min_rr_ratio
-            )
-
-            scored = {
-                **signal,
-                "qualifies": qualifies,
-                "scan_score": rank_score(signal),
-            }
+            qualifies = action in ("BUY", "SELL") and confidence >= min_confidence_pct and rr >= min_rr_ratio
+            scored = {**signal, "qualifies": qualifies, "scan_score": rank_score(signal)}
             results.append(scored)
-
         except Exception as e:
             errors.append({"symbol": symbol, "reason": str(e)})
 
     results.sort(key=lambda x: x.get("scan_score", -9999), reverse=True)
-
     qualified = [r for r in results if r.get("qualifies")]
-
+    source = "websocket" if exchange.lower() == "binance" and websocket_enabled else "rest"
     return {
         "ok": True,
         "exchange": exchange,
         "timeframe": timeframe,
         "market_type": market_type,
+        "data_source": source,
         "scanned_count": len(symbols),
         "qualified_count": len(qualified),
         "top": qualified[:limit],

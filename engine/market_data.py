@@ -43,6 +43,53 @@ def fetch_candles(
     limit: int = 250,
     market_type: str = "future",
     testnet: bool = True,
+    websocket_enabled: bool = True,
+) -> list[dict[str, float]]:
+    exchange = exchange.lower().strip()
+    market_type = market_type.lower().strip()
+
+    if exchange == "binance" and websocket_enabled:
+        try:
+            from market_data_ws import ensure_binance_feed, get_binance_cached_candles
+
+            ensure_binance_feed(
+                symbols=[symbol],
+                timeframe=timeframe,
+                market_type=market_type,
+                testnet=testnet,
+                limit=max(limit, 300),
+                bootstrap_limit=max(limit, 250),
+            )
+            cached = get_binance_cached_candles(
+                symbol=symbol,
+                timeframe=timeframe,
+                market_type=market_type,
+                testnet=testnet,
+                min_bars=min(50, limit),
+            )
+            if cached:
+                return cached[-limit:]
+        except Exception:
+            pass
+
+    return fetch_candles_rest(
+        symbol=symbol,
+        exchange=exchange,
+        timeframe=timeframe,
+        limit=limit,
+        market_type=market_type,
+        testnet=testnet,
+    )
+
+
+
+def fetch_candles_rest(
+    symbol: str,
+    exchange: str = "binance",
+    timeframe: str = "1h",
+    limit: int = 250,
+    market_type: str = "future",
+    testnet: bool = True,
 ) -> list[dict[str, float]]:
     exchange = exchange.lower().strip()
     market_type = market_type.lower().strip()
@@ -76,6 +123,9 @@ def _fetch_binance(symbol: str, timeframe: str, limit: int, market_type: str, te
             "low": float(row[3]),
             "close": float(row[4]),
             "volume": float(row[5]),
+            "open_time": int(row[0]),
+            "close_time": int(row[6]),
+            "is_closed": True,
         })
     return candles
 

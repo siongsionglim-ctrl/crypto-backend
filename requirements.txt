@@ -5,3 +5,4 @@ python-dotenv
 ccxt
 pydantic
 numpy
+websockets>=12.0

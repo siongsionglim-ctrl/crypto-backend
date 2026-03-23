@@ -4,7 +4,6 @@ from .market_data import fetch_candles
 from .advanced_signal_engine import Candle, build_trade_idea
 
 
-
 def decide_action_from_idea(idea):
     breakout = float(idea.breakout_probability_pct or 0.0)
     breakdown = float(idea.breakdown_probability_pct or 0.0)
@@ -55,8 +54,16 @@ def generate_signal(
     timeframe: str = "1h",
     market_type: str = "future",
     testnet: bool = True,
+    websocket_enabled: bool = True,
 ):
-    rows = fetch_candles(symbol, exchange=exchange, timeframe=timeframe, market_type=market_type, testnet=testnet)
+    rows = fetch_candles(
+        symbol,
+        exchange=exchange,
+        timeframe=timeframe,
+        market_type=market_type,
+        testnet=testnet,
+        websocket_enabled=websocket_enabled,
+    )
     if not rows:
         return {"error": "No data"}
 
@@ -107,4 +114,5 @@ def generate_signal(
         "stop_distance_pct": stop_distance_pct,
         "tp_distance_pct": tp_distance_pct,
         "should_execute_now": final_action in ("BUY", "SELL") and float(idea.confidence_pct or 0.0) >= 60 and float(idea.rr_ratio or 0.0) >= 1.2,
+        "data_source": "websocket" if exchange == "binance" and websocket_enabled else "rest",
     }

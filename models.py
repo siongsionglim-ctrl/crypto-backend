@@ -6,7 +6,8 @@ class SignalRequest(BaseModel):
     exchange: str = "binance"
     timeframe: str = "1m"
     market_type: str = "future"
-    testnet: bool = True
+    testnet: bool = False
+    websocket_enabled: bool = True
 
 
 class TradeRequest(BaseModel):
@@ -18,13 +19,8 @@ class TradeRequest(BaseModel):
     auto_trade: bool = False
     side: str | None = None
     amount: float = 0.001
-    testnet: bool = True
+    testnet: bool = False
     market_type: str = "future"
-    leverage: int = 3
-    auto_leverage: bool = True
-    risk_per_trade_pct: float = 1.0
-    entry_price: float | None = None
-    stop_loss: float | None = None
 
 
 class BotConfigRequest(BaseModel):
@@ -35,38 +31,37 @@ class BotConfigRequest(BaseModel):
     passphrase: str | None = None
     auto_trade: bool = False
     amount: float = 0.001
-    testnet: bool = True
+    testnet: bool = False
     market_type: str = "future"
     timeframe: str = "1m"
     leverage: int = 3
-    auto_leverage: bool = True
     risk_per_trade_pct: float = 1.0
+    websocket_enabled: bool = True
     max_daily_trades: int = 3
-    min_confidence_pct: float = 50.0
-    min_rr_ratio: float = 1.2
-    cooldown_minutes: int = 5
+    min_confidence_pct: float = 70.0
+    min_rr_ratio: float = 1.5
+    cooldown_minutes: int = 15
     allowed_sides: list[str] = ["BUY", "SELL"]
     hunter_enabled: bool = False
-    scan_exchange: str | None = None
-    scan_timeframe: str = "1m"
-    scan_market_type: str = "future"
     scan_symbols: list[str] = [
         "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT",
         "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
         "SUIUSDT", "TRXUSDT", "LTCUSDT", "BCHUSDT", "APTUSDT",
     ]
-    scan_limit: int = 20
-    scan_cache_ttl_seconds: int = 12
-    bot_cycle_seconds: int | None = None
+    scan_limit: int = 12
+    scan_cache_ttl_seconds: int = 15
+    scan_timeframe: str = "1m"
+    scan_market_type: str = "future"
 
 
 class ScanRequest(BaseModel):
     symbols: list[str] | None = None
-    min_confidence_pct: float = 50.0
-    min_rr_ratio: float = 1.2
-    limit: int = Field(default=20, ge=1, le=100)
+    min_confidence_pct: float = 55.0
+    min_rr_ratio: float = 1.0
+    limit: int = Field(default=12, ge=1, le=100)
     force_refresh: bool = False
     exchange: str = "binance"
     timeframe: str = "1m"
     market_type: str = "future"
-    testnet: bool = True
+    testnet: bool = False
+    websocket_enabled: bool = True
