@@ -12,7 +12,7 @@ from auto_hunter import run_auto_hunter
 from config_store import save_config, load_config, sanitize_config
 from risk_manager import get_state
 from market_data_ws import ensure_binance_feed, get_ws_status
-from exchange_executor import build_exchange_client
+from exchange_executor import build_exchange
 
 
 app = FastAPI()
@@ -195,8 +195,8 @@ async def bot_test_connection():
         return {"ok": True, "message": "Signal-only mode: no API credentials provided."}
 
     try:
-        ex = build_exchange_client(
-            exchange=exchange,
+        ex = build_exchange(
+            exchange_name=exchange,
             api_key=api_key,
             secret=secret,
             passphrase=passphrase,
