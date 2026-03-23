@@ -223,3 +223,43 @@ async def bot_test_connection():
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+    
+    _BOT_RUNNING = False
+
+@app.post("/bot/start")
+def bot_start():
+    global _BOT_RUNNING
+    _BOT_RUNNING = True
+
+    config = load_config()
+    if not config:
+        raise HTTPException(status_code=400, detail="Bot config not found")
+
+    return {
+        "ok": True,
+        "running": True,
+        "message": "Bot started",
+    }
+
+
+@app.post("/bot/stop")
+def bot_stop():
+    global _BOT_RUNNING
+    _BOT_RUNNING = False
+    return {
+        "ok": True,
+        "running": False,
+        "message": "Bot stopped",
+    }
+
+
+@app.get("/bot/status")
+def bot_status():
+    config = load_config() or {}
+    state = get_state()
+    return {
+        "ok": True,
+        "running": _BOT_RUNNING,
+        "hunter_enabled": bool(config.get("hunter_enabled", False)),
+        "state": state,
+    }
