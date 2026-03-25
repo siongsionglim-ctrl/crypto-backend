@@ -54,6 +54,13 @@ def to_market_symbol(exchange_name: str, symbol: str) -> str:
 def _balance_usdt(ex) -> float:
     try:
         balance = ex.fetch_balance()
+        print("[DEBUG BALANCE] keys:", list(balance.keys()), flush=True)
+        if isinstance(balance.get("free"), dict):
+            print("[DEBUG BALANCE] free:", balance.get("free"), flush=True)
+        if isinstance(balance.get("total"), dict):
+            print("[DEBUG BALANCE] total:", balance.get("total"), flush=True)
+        if isinstance(balance.get("USDT"), dict):
+            print("[DEBUG BALANCE] USDT bucket:", balance.get("USDT"), flush=True)
     except Exception as e:
         if "418" in str(e) or "DDoSProtection" in str(e):
             return 0.0
@@ -65,9 +72,11 @@ def _balance_usdt(ex) -> float:
             value = data.get("USDT")
             if value is not None:
                 return float(value)
+
     usdt = balance.get("USDT")
     if isinstance(usdt, dict):
         return float(usdt.get("free") or usdt.get("total") or 0.0)
+
     return 0.0
 
 

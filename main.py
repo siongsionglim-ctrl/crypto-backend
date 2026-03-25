@@ -20,6 +20,12 @@ from auto_hunter import run_auto_hunter
 from config_store import save_config, load_config, sanitize_config
 from risk_manager import get_state, set_open_positions, register_closed_position, set_balance_snapshot
 
+import threading
+
+BOT_THREAD = None
+BOT_RUNNING = False
+
+
 app = FastAPI()
 
 _SCAN_CACHE: dict = {
@@ -29,6 +35,33 @@ _SCAN_CACHE: dict = {
 }
 
 BOT_META_FILE = Path("bot_runtime_meta.json")
+
+def _bot_loop():
+    global BOT_RUNNING
+
+    _log("loop started")
+
+    while True:
+        meta = _load_meta()
+
+        if not meta.get("running"):
+            break
+
+        try:
+            config = load_config()
+
+            result = _run_bot_cycle(config)
+
+            meta["last_result"] = result
+            _save_meta(meta)
+
+        except Exception as e:
+            _log(f"loop error: {e}")
+
+        interval = int(config.get("loop_interval_sec", 60))
+        time.sleep(max(5, interval))
+
+    _log("loop stopped")
 
 
 def _log(message: str) -> None:
@@ -275,28 +308,53 @@ def bot_run():
 
 @app.post("/bot/start")
 def bot_start(req: BotConfigRequest):
+    global BOT_THREAD, BOT_RUNNING
+
     try:
         config = save_config(req.model_dump())
-        result = _run_bot_cycle(config)
+
         meta = _load_meta()
+        if meta.get("running"):
+            return {"ok": True, "running": True, "msg": "Bot already running"}
+
         meta.update({
             "running": True,
             "last_started_at": time.time(),
-            "last_result": result,
         })
         _save_meta(meta)
-        return {"ok": True, "running": True, "result": result, "config": sanitize_config(config)}
+
+        BOT_RUNNING = True
+        BOT_THREAD = threading.Thread(target=_bot_loop, daemon=True)
+        BOT_THREAD.start()
+
+        return {
+            "ok": True,
+            "running": True,
+            "msg": "Bot loop started",
+            "config": sanitize_config(config),
+        }
+
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+
 @app.post("/bot/stop")
 def bot_stop():
+    global BOT_RUNNING
+
     meta = _load_meta()
-    meta.update({"running": False, "last_stopped_at": time.time()})
+    meta.update({
+        "running": False,
+        "last_stopped_at": time.time()
+    })
     _save_meta(meta)
+
+    BOT_RUNNING = False
+
     _log("bot stopped")
-    return {"ok": True, "running": False, "reason": "Bot stopped"}
+
+    return {"ok": True, "running": False}
 
 
 @app.get("/bot/status")
