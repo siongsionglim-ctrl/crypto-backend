@@ -14,6 +14,7 @@ from exchange_executor import (
     build_exchange,
     fetch_live_positions,
     get_available_balance_usdt,
+    discover_scan_symbols,
 )
 from auto_trade import run_auto_trade
 from auto_hunter import run_auto_hunter
