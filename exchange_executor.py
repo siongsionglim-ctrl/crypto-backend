@@ -472,3 +472,54 @@ def fetch_live_positions(
             }
 
     return normalized
+
+def discover_scan_symbols(
+    exchange_name,
+    api_key,
+    secret,
+    passphrase=None,
+    testnet=True,
+    market_type="future",
+    quote_asset="USDT",
+    min_quote_volume=10_000_000,
+    limit=20,
+):
+    try:
+        ex = build_exchange(
+            exchange_name=exchange_name,
+            api_key=api_key,
+            secret=secret,
+            passphrase=passphrase,
+            testnet=testnet,
+            market_type=market_type,
+        )
+
+        markets = ex.load_markets()
+
+        candidates = []
+        for symbol, market in markets.items():
+            if not symbol.endswith(f"/{quote_asset}"):
+                continue
+            if not market.get("active", False):
+                continue
+            candidates.append(symbol)
+
+        tickers = ex.fetch_tickers(candidates)
+
+        scored = []
+        for sym, data in tickers.items():
+            vol = data.get("quoteVolume", 0)
+            if vol and vol >= min_quote_volume:
+                scored.append((sym.replace("/", ""), vol))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        result = [s[0] for s in scored[:limit]]
+
+        print(f"[AUTO SCAN] selected {len(result)} symbols")
+
+        return result
+
+    except Exception as e:
+        print("[AUTO SCAN ERROR]", str(e))
+        return []
