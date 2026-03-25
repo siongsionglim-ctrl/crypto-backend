@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import time
 import ccxt
+
+_BALANCE_CACHE: dict[tuple[str, str, str, str, bool, str], tuple[float, float]] = {}
 
 
 def build_exchange(exchange_name, api_key, secret, passphrase=None, testnet=True, market_type="future"):
@@ -11,7 +14,7 @@ def build_exchange(exchange_name, api_key, secret, passphrase=None, testnet=True
         "apiKey": api_key,
         "secret": secret,
         "enableRateLimit": True,
-        "options": {"defaultType": default_type},
+        "options": {"defaultType": default_type, "adjustForTimeDifference": True},
     }
 
     if name == "binance":
@@ -49,7 +52,13 @@ def to_market_symbol(exchange_name: str, symbol: str) -> str:
 
 
 def _balance_usdt(ex) -> float:
-    balance = ex.fetch_balance()
+    try:
+        balance = ex.fetch_balance()
+    except Exception as e:
+        if "418" in str(e) or "DDoSProtection" in str(e):
+            return 0.0
+        raise
+
     for bucket in ("free", "total"):
         data = balance.get(bucket)
         if isinstance(data, dict):
@@ -62,6 +71,41 @@ def _balance_usdt(ex) -> float:
     return 0.0
 
 
+def get_available_balance_usdt(
+    exchange_name,
+    api_key,
+    secret,
+    passphrase=None,
+    testnet=True,
+    market_type="future",
+    cache_ttl_seconds: int = 25,
+) -> float:
+    cache_key = (
+        exchange_name.lower(),
+        api_key or "",
+        secret or "",
+        passphrase or "",
+        bool(testnet),
+        market_type,
+    )
+    cached = _BALANCE_CACHE.get(cache_key)
+    now = time.time()
+    if cached and now - cached[0] <= max(0, int(cache_ttl_seconds or 0)):
+        return float(cached[1])
+
+    ex = build_exchange(
+        exchange_name=exchange_name,
+        api_key=api_key,
+        secret=secret,
+        passphrase=passphrase,
+        testnet=testnet,
+        market_type=market_type,
+    )
+    value = _balance_usdt(ex)
+    _BALANCE_CACHE[cache_key] = (now, value)
+    return value
+
+
 def _resolve_market(ex, market_symbol: str):
     ex.load_markets()
     return ex.market(market_symbol)
@@ -72,6 +116,12 @@ def _round_amount(ex, market_symbol: str, amount: float) -> float:
     if rounded < 0:
         rounded = 0.0
     return rounded
+
+
+def _round_price(ex, market_symbol: str, price: float | None) -> float | None:
+    if price is None:
+        return None
+    return float(ex.price_to_precision(market_symbol, float(price)))
 
 
 def _min_notional(exchange_name: str, market: dict, market_type: str) -> float:
@@ -150,6 +200,79 @@ def _compute_dynamic_amount(ex, exchange_name: str, market_symbol: str, entry_pr
     return amount, applied_leverage, notional, balance_usdt
 
 
+def _close_side_for_entry(side: str) -> str:
+    s = str(side or "").lower().strip()
+    return "sell" if s == "buy" else "buy"
+
+
+def _build_trigger_params(exchange_name: str, kind: str, trigger_price: float, close_side: str) -> tuple[str, dict]:
+    name = exchange_name.lower()
+    trigger_price = float(trigger_price)
+    if kind == "tp":
+        order_type = "TAKE_PROFIT_MARKET"
+    else:
+        order_type = "STOP_MARKET"
+
+    params = {
+        "stopPrice": trigger_price,
+        "triggerPrice": trigger_price,
+        "reduceOnly": True,
+        "workingType": "MARK_PRICE",
+        "timeInForce": "GTC",
+    }
+
+    if name == "binance":
+        params["priceProtect"] = True
+    elif name == "bybit":
+        params["triggerBy"] = "MarkPrice"
+    elif name == "okx":
+        params["reduceOnly"] = True
+        params["tdMode"] = "cross"
+
+    params["side"] = close_side
+    return order_type, params
+
+
+def place_protective_orders(
+    ex,
+    exchange_name: str,
+    market_symbol: str,
+    entry_side: str,
+    amount: float,
+    take_profit: float | None = None,
+    stop_loss: float | None = None,
+):
+    close_side = _close_side_for_entry(entry_side)
+    placed: dict[str, dict] = {}
+    warnings: list[str] = []
+
+    for key, price in (("take_profit", take_profit), ("stop_loss", stop_loss)):
+        if price is None:
+            continue
+        kind = "tp" if key == "take_profit" else "sl"
+        try:
+            rounded_price = _round_price(ex, market_symbol, float(price))
+            order_type, params = _build_trigger_params(exchange_name, kind, rounded_price, close_side)
+            order = ex.create_order(
+                symbol=market_symbol,
+                type=order_type,
+                side=close_side,
+                amount=float(amount),
+                price=None,
+                params=params,
+            )
+            placed[key] = {
+                "order": order,
+                "trigger_price": rounded_price,
+                "close_side": close_side,
+                "type": order_type,
+            }
+        except Exception as e:
+            warnings.append(f"{key} order placement failed: {e}")
+
+    return {"orders": placed, "warnings": warnings}
+
+
 def place_market_order(
     exchange_name,
     api_key,
@@ -165,6 +288,7 @@ def place_market_order(
     risk_per_trade_pct: float | None = None,
     entry_price: float | None = None,
     stop_loss: float | None = None,
+    take_profit: float | None = None,
 ):
     ex = build_exchange(
         exchange_name=exchange_name,
@@ -181,9 +305,10 @@ def place_market_order(
 
     final_amount = float(amount or 0.0)
     notional_estimate = final_amount * float(entry_price or 0.0)
+    available_balance_usdt = None
 
     if risk_per_trade_pct is not None and risk_per_trade_pct > 0:
-        final_amount, applied_leverage, notional_estimate, _ = _compute_dynamic_amount(
+        final_amount, applied_leverage, notional_estimate, available_balance_usdt = _compute_dynamic_amount(
             ex,
             exchange_name,
             market_symbol,
@@ -196,6 +321,7 @@ def place_market_order(
         )
     else:
         final_amount, notional_estimate = _ensure_minimums(ex, exchange_name, market_symbol, final_amount, entry_price, market_type)
+        available_balance_usdt = _balance_usdt(ex)
         if final_amount <= 0:
             raise ValueError("Order amount rounded to zero. Increase amount.")
 
@@ -215,6 +341,19 @@ def place_market_order(
         amount=final_amount,
         params=params,
     )
+
+    exit_orders = {"orders": {}, "warnings": []}
+    if market_type == "future" and (take_profit is not None or stop_loss is not None):
+        exit_orders = place_protective_orders(
+            ex=ex,
+            exchange_name=exchange_name,
+            market_symbol=market_symbol,
+            entry_side=side.lower(),
+            amount=final_amount,
+            take_profit=take_profit,
+            stop_loss=stop_loss,
+        )
+
     return {
         "requested_symbol": symbol,
         "market_symbol": market_symbol,
@@ -226,13 +365,17 @@ def place_market_order(
         "auto_leverage": bool(auto_leverage),
         "entry_price": entry_price,
         "stop_loss": stop_loss,
+        "take_profit": take_profit,
         "notional_estimate": notional_estimate,
+        "available_balance_usdt": available_balance_usdt,
         "order": order,
+        "exit_orders": exit_orders.get("orders") or {},
+        "exit_order_warnings": exit_orders.get("warnings") or [],
     }
 
 
 def _normalize_symbol(exchange_name: str, market_symbol: str) -> str:
-    s = str(market_symbol or '').replace('/', '').replace(':USDT', '').replace(':USDC', '')
+    s = str(market_symbol or "").replace("/", "").replace(":USDT", "").replace(":USDC", "")
     return s.upper()
 
 
@@ -255,12 +398,13 @@ def fetch_live_positions(
     )
 
     ex.load_markets()
-    requested_symbols = [to_market_symbol(exchange_name, s) for s in (symbols or []) if s]
+    normalized_symbols = {str(s).upper() for s in (symbols or []) if s}
+    requested_symbols = [to_market_symbol(exchange_name, s) for s in normalized_symbols]
     normalized = {}
 
     if market_type == "future":
         positions = []
-        if hasattr(ex, 'fetch_positions'):
+        if hasattr(ex, "fetch_positions"):
             try:
                 positions = ex.fetch_positions(requested_symbols or None) or []
             except Exception:
@@ -269,9 +413,9 @@ def fetch_live_positions(
             raise ValueError(f"{exchange_name} client does not support fetch_positions for futures sync")
 
         for pos in positions:
-            contracts = pos.get('contracts')
+            contracts = pos.get("contracts")
             if contracts is None:
-                contracts = pos.get('positionAmt') or pos.get('contracts') or 0
+                contracts = pos.get("positionAmt") or pos.get("contracts") or 0
             try:
                 contracts = float(contracts or 0)
             except Exception:
@@ -279,31 +423,34 @@ def fetch_live_positions(
             if abs(contracts) <= 0:
                 continue
 
-            raw_symbol = pos.get('symbol') or pos.get('info', {}).get('symbol') or ''
+            raw_symbol = pos.get("symbol") or pos.get("info", {}).get("symbol") or ""
             symbol = _normalize_symbol(exchange_name, raw_symbol)
-            side = str(pos.get('side') or '').upper()
+            if normalized_symbols and symbol not in normalized_symbols:
+                continue
+
+            side = str(pos.get("side") or "").upper()
             if not side:
-                side = 'BUY' if contracts > 0 else 'SELL'
-            entry = pos.get('entryPrice') or pos.get('entry_price') or pos.get('average') or pos.get('markPrice')
+                side = "BUY" if contracts > 0 else "SELL"
+            entry = pos.get("entryPrice") or pos.get("entry_price") or pos.get("average") or pos.get("markPrice")
             try:
                 entry = float(entry) if entry is not None else None
             except Exception:
                 entry = None
 
             normalized[symbol] = {
-                'symbol': symbol,
-                'market_symbol': raw_symbol,
-                'side': 'BUY' if side in {'LONG', 'BUY'} or contracts > 0 else 'SELL',
-                'amount': abs(float(contracts)),
-                'entry': entry,
-                'source': 'exchange',
-                'market_type': market_type,
+                "symbol": symbol,
+                "market_symbol": raw_symbol,
+                "side": "BUY" if side in {"LONG", "BUY"} or contracts > 0 else "SELL",
+                "amount": abs(float(contracts)),
+                "entry": entry,
+                "source": "exchange",
+                "market_type": market_type,
             }
     else:
         balance = ex.fetch_balance()
-        totals = balance.get('total') if isinstance(balance.get('total'), dict) else balance
+        totals = balance.get("total") if isinstance(balance.get("total"), dict) else balance
         for asset, value in (totals or {}).items():
-            if asset in {'USDT', 'USDC', 'USD'}:
+            if asset in {"USDT", "USDC", "USD"}:
                 continue
             try:
                 qty = float(value or 0)
@@ -312,110 +459,16 @@ def fetch_live_positions(
             if qty <= 0:
                 continue
             symbol = f"{str(asset).upper()}USDT"
-            if symbols and symbol not in {s.upper() for s in symbols}:
+            if normalized_symbols and symbol not in normalized_symbols:
                 continue
             normalized[symbol] = {
-                'symbol': symbol,
-                'market_symbol': to_market_symbol(exchange_name, symbol),
-                'side': 'BUY',
-                'amount': qty,
-                'entry': None,
-                'source': 'exchange',
-                'market_type': market_type,
+                "symbol": symbol,
+                "market_symbol": to_market_symbol(exchange_name, symbol),
+                "side": "BUY",
+                "amount": qty,
+                "entry": None,
+                "source": "exchange",
+                "market_type": market_type,
             }
 
     return normalized
-
-
-_TICKER_CACHE: dict[tuple[str, bool, str], tuple[float, list[str]]] = {}
-
-def discover_scan_symbols(
-    exchange_name: str,
-    market_type: str = "future",
-    testnet: bool = False,
-    quote_asset: str = "USDT",
-    limit: int = 12,
-    min_quote_volume: float = 10000000.0,
-    cache_ttl_seconds: int = 300,
-) -> list[str]:
-    """Discover a liquid symbol universe automatically using public market data.
-
-    Returns normalized symbols like BTCUSDT.
-    """
-    cache_key = (exchange_name.lower(), bool(testnet), market_type)
-    now = time.time()
-    cached = _TICKER_CACHE.get(cache_key)
-    if cached and now - cached[0] <= max(0, int(cache_ttl_seconds or 0)):
-        return list(cached[1][: max(1, int(limit or 1))])
-
-    ex = build_exchange(
-        exchange_name=exchange_name,
-        api_key="",
-        secret="",
-        passphrase=None,
-        testnet=testnet,
-        market_type=market_type,
-    )
-
-    symbols: list[tuple[str, float]] = []
-    quote_asset = str(quote_asset or "USDT").upper()
-
-    try:
-        markets = ex.load_markets()
-        ticker_map = {}
-        try:
-            ticker_map = ex.fetch_tickers() or {}
-        except Exception:
-            ticker_map = {}
-
-        for market_symbol, market in markets.items():
-            try:
-                if not market.get("active", True):
-                    continue
-                if str(market.get("quote") or "").upper() != quote_asset:
-                    continue
-                if market_type == "future" and not (market.get("swap") or market.get("future")):
-                    continue
-                if market_type != "future" and not market.get("spot"):
-                    continue
-                norm = _normalize_symbol(exchange_name, market_symbol)
-                if not norm.endswith(quote_asset):
-                    continue
-                ticker = ticker_map.get(market_symbol) or ticker_map.get(norm) or {}
-                quote_volume = (
-                    ticker.get("quoteVolume")
-                    or ticker.get("baseVolume") and ticker.get("last") and float(ticker.get("baseVolume") or 0) * float(ticker.get("last") or 0)
-                    or market.get("info", {}).get("quoteVolume")
-                    or market.get("info", {}).get("turnover24h")
-                    or 0
-                )
-                try:
-                    qv = float(quote_volume or 0)
-                except Exception:
-                    qv = 0.0
-                if qv < float(min_quote_volume or 0):
-                    continue
-                symbols.append((norm, qv))
-            except Exception:
-                continue
-    except Exception:
-        symbols = []
-
-    if not symbols:
-        fallback = [
-            "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT",
-            "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT", "SUIUSDT", "TRXUSDT",
-        ]
-        _TICKER_CACHE[cache_key] = (now, fallback)
-        return fallback[: max(1, int(limit or 1))]
-
-    symbols.sort(key=lambda item: item[1], reverse=True)
-    unique = []
-    seen = set()
-    for sym, _ in symbols:
-        if sym in seen:
-            continue
-        seen.add(sym)
-        unique.append(sym)
-    _TICKER_CACHE[cache_key] = (now, unique)
-    return unique[: max(1, int(limit or 1))]
