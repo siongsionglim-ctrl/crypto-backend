@@ -24,9 +24,15 @@ def _default_state():
         "daily_realized_pnl_pct": 0.0,
         "consecutive_losses": 0,
         "open_positions": {},
+        "symbol_cooldowns": {},
+        "last_closed_positions": [],
         "last_signal_symbol": None,
         "last_signal_action": None,
         "last_run_time": None,
+        "last_position_sync_time": None,
+        "last_position_sync_error": None,
+        "last_balance_snapshot": None,
+        "last_balance_time": None,
     }
 
 
@@ -76,14 +82,16 @@ def has_open_position(symbol: str | None = None) -> bool:
 
 
 
-def register_open_position(symbol: str, side: str, amount: float, entry: float | None = None):
+def register_open_position(symbol: str, side: str, amount: float, entry: float | None = None, **extra):
     state = get_state()
-    state.setdefault("open_positions", {})[symbol] = {
+    payload = {
         "side": side,
         "amount": amount,
         "entry": entry,
         "opened_at": datetime.utcnow().isoformat(),
     }
+    payload.update(extra or {})
+    state.setdefault("open_positions", {})[symbol] = payload
     save_state(state)
 
 
@@ -92,6 +100,76 @@ def remove_open_position(symbol: str):
     state = get_state()
     state.setdefault("open_positions", {}).pop(symbol, None)
     save_state(state)
+
+
+
+def set_balance_snapshot(available_usdt: float | None, note: str | None = None):
+    state = get_state()
+    state["last_balance_snapshot"] = None if available_usdt is None else float(available_usdt)
+    state["last_balance_time"] = datetime.utcnow().isoformat()
+    if note:
+        state["last_balance_note"] = note
+    save_state(state)
+    return state
+
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
+
+
+
+def get_symbol_cooldown_remaining(symbol: str, state: dict | None = None) -> int:
+    symbol = str(symbol or "").upper().strip()
+    if not symbol:
+        return 0
+    state = state or get_state()
+    raw = (state.get("symbol_cooldowns") or {}).get(symbol)
+    expiry = _parse_dt(raw)
+    if not expiry:
+        return 0
+    seconds_left = int((expiry - datetime.utcnow()).total_seconds())
+    if seconds_left <= 0:
+        return 0
+    return max(1, seconds_left // 60 + (1 if seconds_left % 60 else 0))
+
+
+
+def register_closed_position(symbol: str, closed_position: dict | None = None, cooldown_minutes: int = 15, pnl_pct: float | None = None):
+    state = reset_daily_if_needed(load_state())
+    symbol = str(symbol or "").upper().strip()
+    if not symbol:
+        return state
+
+    state.setdefault("open_positions", {}).pop(symbol, None)
+
+    expiry = datetime.utcnow() + timedelta(minutes=max(0, int(cooldown_minutes or 0)))
+    state.setdefault("symbol_cooldowns", {})[symbol] = expiry.isoformat()
+
+    history = state.setdefault("last_closed_positions", [])
+    history.insert(0, {
+        "symbol": symbol,
+        "closed_at": datetime.utcnow().isoformat(),
+        "cooldown_until": expiry.isoformat(),
+        "position": closed_position or {},
+        "pnl_pct": pnl_pct,
+    })
+    state["last_closed_positions"] = history[:30]
+
+    if pnl_pct is not None:
+        state["daily_realized_pnl_pct"] = float(state.get("daily_realized_pnl_pct", 0.0)) + float(pnl_pct)
+        if pnl_pct < 0:
+            state["consecutive_losses"] = int(state.get("consecutive_losses", 0)) + 1
+        else:
+            state["consecutive_losses"] = 0
+
+    save_state(state)
+    return state
 
 
 
@@ -105,6 +183,7 @@ def evaluate_risk(
     max_daily_loss_pct: float = 5.0,
     max_open_positions: int = 1,
     max_consecutive_losses: int = 3,
+    max_stop_loss_pct: float = 5.0,
 ) -> RiskDecision:
     state = reset_daily_if_needed(load_state())
 
@@ -120,8 +199,8 @@ def evaluate_risk(
         return RiskDecision(False, f"Confidence too low: {confidence:.1f}% < {min_confidence_pct:.1f}%")
     if rr_ratio < min_rr_ratio:
         return RiskDecision(False, f"RR too low: {rr_ratio:.2f} < {min_rr_ratio:.2f}")
-    if stop_distance_pct and stop_distance_pct > 5.0:
-        return RiskDecision(False, f"Stop distance too wide: {stop_distance_pct:.2f}%")
+    if stop_distance_pct and stop_distance_pct > float(max_stop_loss_pct):
+        return RiskDecision(False, f"Stop distance too wide: {stop_distance_pct:.2f}% > {float(max_stop_loss_pct):.2f}%")
 
     if float(state.get("daily_realized_pnl_pct", 0.0)) <= -abs(max_daily_loss_pct):
         return RiskDecision(False, f"Daily loss limit reached: {state.get('daily_realized_pnl_pct', 0.0):.2f}%")
@@ -139,16 +218,18 @@ def evaluate_risk(
     if len(open_positions) >= max_open_positions:
         return RiskDecision(False, f"Max open positions reached: {len(open_positions)}/{max_open_positions}")
 
+    mins_left = get_symbol_cooldown_remaining(symbol, state=state)
+    if mins_left > 0:
+        return RiskDecision(False, f"{symbol} cooldown active: wait about {mins_left} minute(s)")
+
     last_trade_time = state.get("last_trade_time")
-    if last_trade_time:
-        try:
-            last_dt = datetime.fromisoformat(last_trade_time)
+    if last_trade_time and not symbol:
+        last_dt = _parse_dt(last_trade_time)
+        if last_dt:
             next_allowed = last_dt + timedelta(minutes=cooldown_minutes)
             if datetime.utcnow() < next_allowed:
                 mins_left = int((next_allowed - datetime.utcnow()).total_seconds() // 60) + 1
                 return RiskDecision(False, f"Cooldown active: wait about {mins_left} minute(s)")
-        except Exception:
-            pass
 
     return RiskDecision(True, "Risk checks passed")
 
@@ -172,8 +253,8 @@ def record_trade(signal: dict, pnl_pct: float | None = None):
 
 def set_open_positions(positions: dict, sync_error: str | None = None):
     state = get_state()
-    state['open_positions'] = positions or {}
-    state['last_position_sync_time'] = datetime.utcnow().isoformat()
-    state['last_position_sync_error'] = sync_error
+    state["open_positions"] = positions or {}
+    state["last_position_sync_time"] = datetime.utcnow().isoformat()
+    state["last_position_sync_error"] = sync_error
     save_state(state)
     return state

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 CONFIG_FILE = Path("user_config.json")
+
 _SECRET_KEYS = {"api_key", "secret", "passphrase"}
 
 
@@ -17,27 +18,32 @@ def _default_config() -> dict[str, Any]:
         "passphrase": "",
         "auto_trade": False,
         "amount": 0.001,
-        "testnet": False,
+        "testnet": True,
         "market_type": "future",
-        "timeframe": "1m",
-        "higher_timeframe": "5m",
+        "timeframe": "1h",
+        "higher_timeframe": "4h",
+        "scan_exchange": "binance",
+        "scan_timeframe": "1h",
+        "scan_market_type": "future",
         "leverage": 3,
+        "auto_leverage": True,
         "risk_per_trade_pct": 1.0,
-        "websocket_enabled": True,
         "max_daily_trades": 3,
         "min_confidence_pct": 70.0,
         "min_rr_ratio": 1.5,
         "cooldown_minutes": 15,
+        "symbol_cooldown_minutes": 15,
         "allowed_sides": ["BUY", "SELL"],
         "max_daily_loss_pct": 5.0,
         "max_open_positions": 1,
         "max_consecutive_losses": 3,
+        "max_stop_loss_pct": 5.0,
+        "min_available_balance_usdt": 5.0,
+        "balance_cache_ttl_seconds": 8,
         "hunter_enabled": False,
         "scan_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "SUIUSDT"],
-        "scan_limit": 12,
-        "scan_cache_ttl_seconds": 15,
-        "scan_timeframe": "1m",
-        "scan_market_type": "future",
+        "scan_limit": 5,
+        "scan_cache_ttl_seconds": 45,
     }
 
 
@@ -55,6 +61,7 @@ def load_config() -> dict:
         raw = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
     except Exception:
         return _default_config()
+
     merged = _default_config()
     merged.update(raw or {})
     return merged
