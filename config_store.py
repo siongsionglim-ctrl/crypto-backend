@@ -32,18 +32,19 @@ def _default_config() -> dict[str, Any]:
         "min_confidence_pct": 70.0,
         "min_rr_ratio": 1.5,
         "cooldown_minutes": 15,
-        "symbol_cooldown_minutes": 15,
         "allowed_sides": ["BUY", "SELL"],
         "max_daily_loss_pct": 5.0,
         "max_open_positions": 1,
         "max_consecutive_losses": 3,
-        "max_stop_loss_pct": 5.0,
-        "min_available_balance_usdt": 5.0,
-        "balance_cache_ttl_seconds": 8,
         "hunter_enabled": False,
         "scan_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "SUIUSDT"],
         "scan_limit": 5,
         "scan_cache_ttl_seconds": 45,
+        "auto_scan_enabled": True,
+        "auto_scan_limit": 20,
+        "auto_scan_quote_asset": "USDT",
+        "auto_scan_min_quote_volume": 10000000.0,
+        "fallback_symbol": "BTCUSDT",
     }
 
 

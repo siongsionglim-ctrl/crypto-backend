@@ -49,14 +49,7 @@ def to_market_symbol(exchange_name: str, symbol: str) -> str:
 
 
 def _balance_usdt(ex) -> float:
-    try:
-        balance = ex.fetch_balance()
-    except Exception as e:
-        text = str(e)
-        if "DDoSProtection" in text or "418" in text or "Way too many requests" in text:
-            return 0.0
-        raise
-
+    balance = ex.fetch_balance()
     for bucket in ("free", "total"):
         data = balance.get(bucket)
         if isinstance(data, dict):
@@ -332,3 +325,97 @@ def fetch_live_positions(
             }
 
     return normalized
+
+
+_TICKER_CACHE: dict[tuple[str, bool, str], tuple[float, list[str]]] = {}
+
+def discover_scan_symbols(
+    exchange_name: str,
+    market_type: str = "future",
+    testnet: bool = False,
+    quote_asset: str = "USDT",
+    limit: int = 12,
+    min_quote_volume: float = 10000000.0,
+    cache_ttl_seconds: int = 300,
+) -> list[str]:
+    """Discover a liquid symbol universe automatically using public market data.
+
+    Returns normalized symbols like BTCUSDT.
+    """
+    cache_key = (exchange_name.lower(), bool(testnet), market_type)
+    now = time.time()
+    cached = _TICKER_CACHE.get(cache_key)
+    if cached and now - cached[0] <= max(0, int(cache_ttl_seconds or 0)):
+        return list(cached[1][: max(1, int(limit or 1))])
+
+    ex = build_exchange(
+        exchange_name=exchange_name,
+        api_key="",
+        secret="",
+        passphrase=None,
+        testnet=testnet,
+        market_type=market_type,
+    )
+
+    symbols: list[tuple[str, float]] = []
+    quote_asset = str(quote_asset or "USDT").upper()
+
+    try:
+        markets = ex.load_markets()
+        ticker_map = {}
+        try:
+            ticker_map = ex.fetch_tickers() or {}
+        except Exception:
+            ticker_map = {}
+
+        for market_symbol, market in markets.items():
+            try:
+                if not market.get("active", True):
+                    continue
+                if str(market.get("quote") or "").upper() != quote_asset:
+                    continue
+                if market_type == "future" and not (market.get("swap") or market.get("future")):
+                    continue
+                if market_type != "future" and not market.get("spot"):
+                    continue
+                norm = _normalize_symbol(exchange_name, market_symbol)
+                if not norm.endswith(quote_asset):
+                    continue
+                ticker = ticker_map.get(market_symbol) or ticker_map.get(norm) or {}
+                quote_volume = (
+                    ticker.get("quoteVolume")
+                    or ticker.get("baseVolume") and ticker.get("last") and float(ticker.get("baseVolume") or 0) * float(ticker.get("last") or 0)
+                    or market.get("info", {}).get("quoteVolume")
+                    or market.get("info", {}).get("turnover24h")
+                    or 0
+                )
+                try:
+                    qv = float(quote_volume or 0)
+                except Exception:
+                    qv = 0.0
+                if qv < float(min_quote_volume or 0):
+                    continue
+                symbols.append((norm, qv))
+            except Exception:
+                continue
+    except Exception:
+        symbols = []
+
+    if not symbols:
+        fallback = [
+            "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "DOGEUSDT",
+            "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT", "SUIUSDT", "TRXUSDT",
+        ]
+        _TICKER_CACHE[cache_key] = (now, fallback)
+        return fallback[: max(1, int(limit or 1))]
+
+    symbols.sort(key=lambda item: item[1], reverse=True)
+    unique = []
+    seen = set()
+    for sym, _ in symbols:
+        if sym in seen:
+            continue
+        seen.add(sym)
+        unique.append(sym)
+    _TICKER_CACHE[cache_key] = (now, unique)
+    return unique[: max(1, int(limit or 1))]

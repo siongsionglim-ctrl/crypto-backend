@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from engine.scanner_engine import scan_symbols
-from exchange_executor import place_market_order
+from exchange_executor import place_market_order, discover_scan_symbols
 from risk_manager import evaluate_risk, record_trade, register_open_position
 
 
@@ -16,44 +16,27 @@ def normalize_side(action: str | None):
     return None
 
 
-
-def _resolve_take_profit(signal: dict) -> float | None:
-    for key in ("tp", "take_profit", "takeProfit"):
-        value = signal.get(key)
-        if value is not None:
-            return float(value)
-    entry = signal.get("entry") or signal.get("price")
-    stop = signal.get("sl") or signal.get("stop_loss")
-    rr = signal.get("rr_ratio")
-    action = str(signal.get("action") or "").upper().strip()
-    try:
-        entry = float(entry)
-        stop = float(stop)
-        rr = float(rr)
-    except Exception:
-        return None
-    if rr <= 0:
-        return None
-    risk = abs(entry - stop)
-    if risk <= 0:
-        return None
-    if action == "BUY":
-        return entry + risk * rr
-    if action == "SELL":
-        return entry - risk * rr
-    return None
-
-
-
 def run_auto_hunter(config: dict, scan_result: dict | None = None):
-    symbols = config.get("scan_symbols") or [
-        "BTCUSDT",
-        "ETHUSDT",
-        "SOLUSDT",
-        "XRPUSDT",
-        "BNBUSDT",
-        "SUIUSDT",
-    ]
+    auto_scan_enabled = bool(config.get("auto_scan_enabled", True))
+    if auto_scan_enabled:
+        symbols = discover_scan_symbols(
+            exchange_name=config.get("scan_exchange") or config.get("exchange", "binance"),
+            market_type=config.get("scan_market_type") or config.get("market_type", "future"),
+            testnet=bool(config.get("testnet", True)),
+            quote_asset=config.get("auto_scan_quote_asset", "USDT"),
+            limit=int(config.get("auto_scan_limit", 20)),
+            min_quote_volume=float(config.get("auto_scan_min_quote_volume", 10000000.0)),
+            cache_ttl_seconds=max(120, int(config.get("scan_cache_ttl_seconds", 45))),
+        )
+    else:
+        symbols = config.get("scan_symbols") or [
+            "BTCUSDT",
+            "ETHUSDT",
+            "SOLUSDT",
+            "XRPUSDT",
+            "BNBUSDT",
+            "SUIUSDT",
+        ]
 
     if scan_result is None:
         scan_result = scan_symbols(
@@ -69,11 +52,14 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
 
     top = scan_result.get("top", [])
     if not top:
+        fallback_symbol = str(config.get("fallback_symbol") or "BTCUSDT").upper()
         return {
             "ok": True,
             "mode": "hunter_signal_only",
             "scan_result": scan_result,
-            "reason": "No qualified opportunities found",
+            "discovered_symbols": symbols,
+            "fallback_symbol": fallback_symbol,
+            "reason": f"No qualified opportunities found. Fallback symbol ready: {fallback_symbol}",
         }
 
     best = top[0]
@@ -87,6 +73,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "best_signal": best,
             "scan_result": scan_result,
             "reason": "Top setup is not executable",
+            "discovered_symbols": symbols,
         }
 
     risk = evaluate_risk(
@@ -99,7 +86,6 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         max_daily_loss_pct=float(config.get("max_daily_loss_pct", 5.0)),
         max_open_positions=int(config.get("max_open_positions", 1)),
         max_consecutive_losses=int(config.get("max_consecutive_losses", 3)),
-        max_stop_loss_pct=float(config.get("max_stop_loss_pct", 5.0)),
     )
 
     if not risk.allowed:
@@ -109,6 +95,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "best_signal": best,
             "scan_result": scan_result,
             "reason": risk.reason,
+            "discovered_symbols": symbols,
         }
 
     if not config.get("auto_trade", False):
@@ -118,11 +105,8 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "best_signal": best,
             "scan_result": scan_result,
             "reason": "Auto trade disabled",
+            "discovered_symbols": symbols,
         }
-
-    entry_price = best.get("entry") or best.get("price")
-    stop_loss = best.get("sl") or best.get("stop_loss")
-    take_profit = _resolve_take_profit(best)
 
     order = place_market_order(
         exchange_name=config["exchange"],
@@ -137,23 +121,11 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         leverage=int(config.get("leverage", 3)),
         auto_leverage=bool(config.get("auto_leverage", True)),
         risk_per_trade_pct=float(config.get("risk_per_trade_pct", 1.0)),
-        entry_price=entry_price,
-        stop_loss=stop_loss,
-        take_profit=take_profit,
+        entry_price=best.get("entry") or best.get("price"),
+        stop_loss=best.get("sl"),
     )
 
-    register_open_position(
-        best["symbol"],
-        best.get("action", side).upper(),
-        float(order.get("amount") or config.get("amount", 0.001)),
-        entry_price,
-        stop_loss=stop_loss,
-        take_profit=take_profit,
-        exit_orders=order.get("exit_orders") or {},
-        exit_order_warnings=order.get("exit_order_warnings") or [],
-        applied_leverage=order.get("applied_leverage"),
-        notional_estimate=order.get("notional_estimate"),
-    )
+    register_open_position(best["symbol"], best.get("action", side).upper(), float(order.get("amount") or config.get("amount", 0.001)), best.get("entry") or best.get("price"))
     record_trade(best)
 
     return {
@@ -163,4 +135,5 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         "scan_result": scan_result,
         "order": order,
         "reason": "Auto Hunter trade executed",
+        "discovered_symbols": symbols,
     }
