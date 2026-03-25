@@ -361,8 +361,8 @@ def bot_stop():
 def bot_status():
     meta = _load_meta()
     config = load_config()
-    state = _sync_open_positions_with_exchange(config)
-    available_balance = _check_available_balance(config)
+    state = get_state()
+    available_balance = state.get("balance_snapshot")
     last_result = meta.get("last_result") or {}
     signal = last_result.get("signal") or last_result.get("best_signal") or {}
     order_wrap = last_result.get("order") if isinstance(last_result.get("order"), dict) else {}

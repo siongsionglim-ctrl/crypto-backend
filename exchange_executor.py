@@ -61,8 +61,8 @@ def _balance_usdt(ex) -> float:
     except Exception as e:
         if "418" in str(e) or "DDoSProtection" in str(e):
             print("[DEBUG BALANCE] rate-limited:", str(e), flush=True)
-            return 0.0
-        print("[DEBUG BALANCE] fetch error:", str(e), flush=True)
+        else:
+            print("[DEBUG BALANCE] fetch error:", str(e), flush=True)
         raise
 
     for bucket in ("free", "total"):
@@ -98,6 +98,7 @@ def get_available_balance_usdt(
     )
     cached = _BALANCE_CACHE.get(cache_key)
     now = time.time()
+
     if cached and now - cached[0] <= max(0, int(cache_ttl_seconds or 0)):
         return float(cached[1])
 
@@ -109,9 +110,19 @@ def get_available_balance_usdt(
         testnet=testnet,
         market_type=market_type,
     )
-    value = _balance_usdt(ex)
-    _BALANCE_CACHE[cache_key] = (now, value)
-    return value
+
+    try:
+        value = _balance_usdt(ex)
+        # only cache valid positive or zero values from a successful fetch
+        _BALANCE_CACHE[cache_key] = (now, value)
+        return value
+    except Exception as e:
+        if "418" in str(e) or "DDoSProtection" in str(e):
+            if cached:
+                print("[BALANCE CACHE] using previous cached balance due to rate limit", flush=True)
+                return float(cached[1])
+            return 0.0
+        raise
 
 
 def _resolve_market(ex, market_symbol: str):
