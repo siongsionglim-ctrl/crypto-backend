@@ -60,7 +60,9 @@ def _balance_usdt(ex) -> float:
         print("[DEBUG BALANCE] USDT =", balance.get("USDT"), flush=True)
     except Exception as e:
         if "418" in str(e) or "DDoSProtection" in str(e):
+            print("[DEBUG BALANCE] rate-limited:", str(e), flush=True)
             return 0.0
+        print("[DEBUG BALANCE] fetch error:", str(e), flush=True)
         raise
 
     for bucket in ("free", "total"):
