@@ -516,11 +516,30 @@ def discover_scan_symbols(
     markets = ex.load_markets()
     candidates = []
 
+    # 🚨 filter bad base assets
+    skip_bases = {
+        "USDT", "USDC", "BUSD", "TUSD", "FDUSD", "USD1",
+        "EUR", "GBP", "TRY", "BRL", "AUD", "RUB",
+    }
+
     for symbol, market in markets.items():
         if not symbol.endswith(f"/{quote_asset}"):
             continue
+
         if not market.get("active", False):
             continue
+
+        base = str(market.get("base") or "")
+
+        # ❌ skip stablecoin pairs
+        if base in skip_bases:
+            continue
+
+        # ✅ ensure futures market only
+        if market_type == "future":
+            if not (market.get("swap") or market.get("future") or market.get("contract")):
+                continue
+
         candidates.append(symbol)
 
     tickers = ex.fetch_tickers(candidates)
@@ -528,8 +547,19 @@ def discover_scan_symbols(
 
     for sym, data in tickers.items():
         vol = data.get("quoteVolume", 0)
+
         if vol and vol >= min_quote_volume:
-            scored.append((sym.replace("/", ""), vol))
+            market = markets.get(sym, {})
+            base = str(market.get("base") or "")
+            quote = str(market.get("quote") or quote_asset)
+
+            # convert BTC/USDT → BTCUSDT
+            scored.append((f"{base}{quote}", vol))
 
     scored.sort(key=lambda x: x[1], reverse=True)
-    return [s[0] for s in scored[:limit]]
+
+    result = [s[0] for s in scored[:limit]]
+
+    print(f"[AUTO SCAN] symbols={result}")
+
+    return result
