@@ -25,6 +25,7 @@ class TradeRequest(BaseModel):
     risk_per_trade_pct: float = 1.0
     entry_price: float | None = None
     stop_loss: float | None = None
+    take_profit: float | None = None
 
 
 class BotConfigRequest(BaseModel):
@@ -43,15 +44,21 @@ class BotConfigRequest(BaseModel):
     leverage: int = 3
     auto_leverage: bool = True
     risk_per_trade_pct: float = 1.0
+    min_available_balance_usdt: float = 5.0
+    balance_cache_ttl_seconds: int = 25
+    loop_interval_sec: int = 60
 
     max_daily_trades: int = 3
     min_confidence_pct: float = 70.0
     min_rr_ratio: float = 1.5
     cooldown_minutes: int = 15
+    symbol_cooldown_minutes: int = 15
     allowed_sides: list[str] = ["BUY", "SELL"]
     max_daily_loss_pct: float = 5.0
     max_open_positions: int = 1
     max_consecutive_losses: int = 3
+    max_stop_loss_pct: float = 5.0
+    max_sl_pct: float = 5.0
 
     hunter_enabled: bool = False
     scan_exchange: str = "binance"
@@ -76,6 +83,7 @@ class BotConfigRequest(BaseModel):
     ]
     scan_limit: int = 12
     scan_cache_ttl_seconds: int = 45
+
     auto_scan_enabled: bool = True
     auto_scan_limit: int = 20
     auto_scan_quote_asset: str = "USDT"

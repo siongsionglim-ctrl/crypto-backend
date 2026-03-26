@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -19,13 +20,15 @@ from exchange_executor import (
 from auto_trade import run_auto_trade
 from auto_hunter import run_auto_hunter
 from config_store import save_config, load_config, sanitize_config
-from risk_manager import get_state, set_open_positions, register_closed_position, set_balance_snapshot
-
-import threading
+from risk_manager import (
+    get_state,
+    set_open_positions,
+    register_closed_position,
+    set_balance_snapshot,
+)
 
 BOT_THREAD = None
 BOT_RUNNING = False
-
 
 app = FastAPI()
 
@@ -37,37 +40,9 @@ _SCAN_CACHE: dict = {
 
 BOT_META_FILE = Path("bot_runtime_meta.json")
 
-def _bot_loop():
-    global BOT_RUNNING
-
-    _log("loop started")
-
-    while True:
-        meta = _load_meta()
-
-        if not meta.get("running"):
-            break
-
-        try:
-            config = load_config()
-
-            result = _run_bot_cycle(config)
-
-            meta["last_result"] = result
-            _save_meta(meta)
-
-        except Exception as e:
-            _log(f"loop error: {e}")
-
-        interval = int(config.get("loop_interval_sec", 60))
-        time.sleep(max(5, interval))
-
-    _log("loop stopped")
-
 
 def _log(message: str) -> None:
     print(f"[BOT] {message}", flush=True)
-
 
 
 def _load_meta() -> dict:
@@ -82,29 +57,71 @@ def _load_meta() -> dict:
     return base
 
 
-
 def _save_meta(data: dict) -> dict:
     BOT_META_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return data
 
+
+def _bot_loop():
+    global BOT_RUNNING
+
+    _log("loop started")
+
+    while BOT_RUNNING:
+        meta = _load_meta()
+        if not meta.get("running"):
+            break
+
+        config = load_config()
+        if not config:
+            _log("loop waiting: config not found")
+            time.sleep(5)
+            continue
+
+        try:
+            result = _run_bot_cycle(config)
+            meta["last_result"] = result
+            _save_meta(meta)
+        except Exception as e:
+            _log(f"loop error: {e}")
+
+        interval = int(config.get("loop_interval_sec", 60))
+        time.sleep(max(5, interval))
+
+    _log("loop stopped")
 
 
 def _scan_cache_fresh(ttl_seconds: int = 45) -> bool:
     return _SCAN_CACHE["data"] is not None and (time.time() - _SCAN_CACHE["created_at"] <= ttl_seconds)
 
 
-
 def _has_exchange_credentials(config: dict) -> bool:
     return bool((config.get("api_key") or "").strip() and (config.get("secret") or "").strip())
 
 
+def _seconds_since_iso(ts: str | None) -> float | None:
+    if not ts:
+        return None
+    try:
+        from datetime import datetime
+        return max(0.0, time.time() - datetime.fromisoformat(ts).timestamp())
+    except Exception:
+        return None
 
-def _sync_open_positions_with_exchange(config: dict) -> dict:
+
+def _sync_open_positions_with_exchange(config: dict, force: bool = False) -> dict:
     previous_state = get_state()
     previous_positions = previous_state.get("open_positions") or {}
 
     if not _has_exchange_credentials(config):
         return previous_state
+
+    ttl_seconds = int(config.get("position_sync_ttl_seconds", 20))
+    if not force:
+        seconds_since_last = _seconds_since_iso(previous_state.get("last_position_sync_time"))
+        if seconds_since_last is not None and seconds_since_last < max(5, ttl_seconds):
+            return previous_state
+
     try:
         symbols = config.get("scan_symbols") or [config.get("symbol")]
         live_positions = fetch_live_positions(
@@ -127,24 +144,31 @@ def _sync_open_positions_with_exchange(config: dict) -> dict:
         _log(f"position sync complete count={len(live_positions)}")
         return state
     except Exception as e:
-        state = get_state()
-        return set_open_positions(state.get("open_positions") or {}, sync_error=str(e))
-
+        return set_open_positions(previous_state.get("open_positions") or {}, sync_error=str(e))
 
 
 def _build_scan_params_from_config(config: dict) -> dict:
     auto_scan_enabled = bool(config.get("auto_scan_enabled", True))
     symbols = config.get("scan_symbols")
+
     if auto_scan_enabled:
         symbols = discover_scan_symbols(
             exchange_name=config.get("scan_exchange") or config.get("exchange", "binance"),
-            market_type=config.get("scan_market_type") or config.get("market_type", "future"),
+            api_key=config.get("api_key", ""),
+            secret=config.get("secret", ""),
+            passphrase=config.get("passphrase"),
             testnet=bool(config.get("testnet", True)),
+            market_type=config.get("scan_market_type") or config.get("market_type", "future"),
             quote_asset=config.get("auto_scan_quote_asset", "USDT"),
             limit=int(config.get("auto_scan_limit", 20)),
             min_quote_volume=float(config.get("auto_scan_min_quote_volume", 10000000.0)),
             cache_ttl_seconds=max(120, int(config.get("scan_cache_ttl_seconds", 45))),
         )
+
+    if not symbols:
+        fallback_symbol = config.get("fallback_symbol")
+        symbols = [fallback_symbol] if fallback_symbol else config.get("scan_symbols")
+
     return {
         "symbols": symbols,
         "min_confidence_pct": float(config.get("min_confidence_pct", 55.0)),
@@ -155,7 +179,6 @@ def _build_scan_params_from_config(config: dict) -> dict:
         "market_type": config.get("scan_market_type") or config.get("market_type", "future"),
         "testnet": bool(config.get("testnet", True)),
     }
-
 
 
 def _run_and_cache_scan(*, symbols=None, min_confidence_pct=55.0, min_rr_ratio=1.0, limit=12, exchange="binance", timeframe="1h", market_type="future", testnet=True) -> dict:
@@ -185,10 +208,11 @@ def _run_and_cache_scan(*, symbols=None, min_confidence_pct=55.0, min_rr_ratio=1
     return result
 
 
-
 def _check_available_balance(config: dict) -> float | None:
     if not _has_exchange_credentials(config):
         return None
+    state = get_state()
+    cached_balance = state.get("balance_snapshot")
     available = get_available_balance_usdt(
         exchange_name=config.get("exchange", "binance"),
         api_key=config.get("api_key", ""),
@@ -196,29 +220,19 @@ def _check_available_balance(config: dict) -> float | None:
         passphrase=config.get("passphrase"),
         testnet=bool(config.get("testnet", True)),
         market_type=config.get("market_type", "future"),
-        cache_ttl_seconds=int(config.get("balance_cache_ttl_seconds", 8)),
+        cache_ttl_seconds=int(config.get("balance_cache_ttl_seconds", 25)),
     )
+    if available == 0.0 and cached_balance not in (None, 0, 0.0):
+        set_balance_snapshot(cached_balance, note="Reused cached balance after temporary fetch issue")
+        return float(cached_balance)
     set_balance_snapshot(available)
     return available
 
 
-
 def _run_bot_cycle(config: dict) -> dict:
-    state = _sync_open_positions_with_exchange(config)
+    state = _sync_open_positions_with_exchange(config, force=True)
     min_balance = float(config.get("min_available_balance_usdt", 5.0))
     available_balance = _check_available_balance(config)
-
-    if available_balance is not None and available_balance < min_balance:
-        _log(f"balance gate active available={available_balance:.4f} min={min_balance:.4f}")
-        result = {
-            "ok": True,
-            "mode": "waiting_for_balance",
-            "available_balance_usdt": available_balance,
-            "min_available_balance_usdt": min_balance,
-            "open_positions": state.get("open_positions") or {},
-            "reason": f"Available balance below {min_balance:.2f} USDT. Bot waiting for funds.",
-        }
-        return result
 
     if config.get("hunter_enabled", False):
         ttl = int(config.get("scan_cache_ttl_seconds", 45))
@@ -228,8 +242,31 @@ def _run_bot_cycle(config: dict) -> dict:
             scan_result = _SCAN_CACHE["data"]
         else:
             scan_result = _run_and_cache_scan(**params)
+
+        if available_balance is not None and available_balance < min_balance:
+            _log(f"balance gate active available={available_balance:.4f} min={min_balance:.4f}")
+            return {
+                "ok": True,
+                "mode": "scan_only",
+                "available_balance_usdt": available_balance,
+                "min_available_balance_usdt": min_balance,
+                "scan_result": scan_result,
+                "open_positions": state.get("open_positions") or {},
+                "reason": f"Available balance below {min_balance:.2f} USDT. Scanning only; trading paused.",
+            }
+
         result = run_auto_hunter(config, scan_result=scan_result)
     else:
+        if available_balance is not None and available_balance < min_balance:
+            _log(f"balance gate active available={available_balance:.4f} min={min_balance:.4f}")
+            return {
+                "ok": True,
+                "mode": "waiting_for_balance",
+                "available_balance_usdt": available_balance,
+                "min_available_balance_usdt": min_balance,
+                "open_positions": state.get("open_positions") or {},
+                "reason": f"Available balance below {min_balance:.2f} USDT. Bot waiting for funds.",
+            }
         result = run_auto_trade(config)
 
     result.setdefault("available_balance_usdt", available_balance)
@@ -334,10 +371,8 @@ def bot_start(req: BotConfigRequest):
             "msg": "Bot loop started",
             "config": sanitize_config(config),
         }
-
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 
 
 @app.post("/bot/stop")
@@ -352,7 +387,6 @@ def bot_stop():
     _save_meta(meta)
 
     BOT_RUNNING = False
-
     _log("bot stopped")
 
     return {"ok": True, "running": False}
@@ -439,7 +473,7 @@ def bot_sync_positions():
     config = load_config()
     if not config:
         raise HTTPException(status_code=400, detail="Bot config not found")
-    state = _sync_open_positions_with_exchange(config)
+    state = _sync_open_positions_with_exchange(config, force=True)
     return {
         "ok": True,
         "open_positions": state.get("open_positions") or {},

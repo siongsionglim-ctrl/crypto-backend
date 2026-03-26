@@ -15,7 +15,6 @@ class RiskDecision:
     reason: str
 
 
-
 def _default_state():
     return {
         "trade_count_today": 0,
@@ -31,10 +30,11 @@ def _default_state():
         "last_run_time": None,
         "last_position_sync_time": None,
         "last_position_sync_error": None,
+        "balance_snapshot": None,
         "last_balance_snapshot": None,
         "last_balance_time": None,
+        "last_balance_note": None,
     }
-
 
 
 def load_state():
@@ -49,10 +49,8 @@ def load_state():
     return out
 
 
-
 def save_state(state: dict):
     STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-
 
 
 def reset_daily_if_needed(state: dict):
@@ -65,12 +63,10 @@ def reset_daily_if_needed(state: dict):
     return state
 
 
-
 def get_state():
     state = reset_daily_if_needed(load_state())
     save_state(state)
     return state
-
 
 
 def has_open_position(symbol: str | None = None) -> bool:
@@ -79,7 +75,6 @@ def has_open_position(symbol: str | None = None) -> bool:
     if symbol:
         return symbol in positions
     return bool(positions)
-
 
 
 def register_open_position(symbol: str, side: str, amount: float, entry: float | None = None, **extra):
@@ -95,23 +90,22 @@ def register_open_position(symbol: str, side: str, amount: float, entry: float |
     save_state(state)
 
 
-
 def remove_open_position(symbol: str):
     state = get_state()
     state.setdefault("open_positions", {}).pop(symbol, None)
     save_state(state)
 
 
-
 def set_balance_snapshot(available_usdt: float | None, note: str | None = None):
     state = get_state()
-    state["last_balance_snapshot"] = None if available_usdt is None else float(available_usdt)
+    value = None if available_usdt is None else float(available_usdt)
+    state["balance_snapshot"] = value
+    state["last_balance_snapshot"] = value
     state["last_balance_time"] = datetime.utcnow().isoformat()
     if note:
         state["last_balance_note"] = note
     save_state(state)
     return state
-
 
 
 def _parse_dt(value: str | None) -> datetime | None:
@@ -121,7 +115,6 @@ def _parse_dt(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value)
     except Exception:
         return None
-
 
 
 def get_symbol_cooldown_remaining(symbol: str, state: dict | None = None) -> int:
@@ -137,7 +130,6 @@ def get_symbol_cooldown_remaining(symbol: str, state: dict | None = None) -> int
     if seconds_left <= 0:
         return 0
     return max(1, seconds_left // 60 + (1 if seconds_left % 60 else 0))
-
 
 
 def register_closed_position(symbol: str, closed_position: dict | None = None, cooldown_minutes: int = 15, pnl_pct: float | None = None):
@@ -170,7 +162,6 @@ def register_closed_position(symbol: str, closed_position: dict | None = None, c
 
     save_state(state)
     return state
-
 
 
 def evaluate_risk(
@@ -234,7 +225,6 @@ def evaluate_risk(
     return RiskDecision(True, "Risk checks passed")
 
 
-
 def record_trade(signal: dict, pnl_pct: float | None = None):
     state = reset_daily_if_needed(load_state())
     state["trade_count_today"] = int(state.get("trade_count_today", 0)) + 1
@@ -248,7 +238,6 @@ def record_trade(signal: dict, pnl_pct: float | None = None):
         else:
             state["consecutive_losses"] = 0
     save_state(state)
-
 
 
 def set_open_positions(positions: dict, sync_error: str | None = None):

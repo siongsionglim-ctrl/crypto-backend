@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from engine.trading_engine import generate_signal
 from exchange_executor import place_market_order
 from risk_manager import evaluate_risk, record_trade, register_open_position
@@ -14,33 +16,39 @@ def normalize_side(action: str | None):
     return None
 
 
-
 def _resolve_take_profit(signal: dict) -> float | None:
     for key in ("tp", "take_profit", "takeProfit"):
         value = signal.get(key)
         if value is not None:
-            return float(value)
+            try:
+                return float(value)
+            except Exception:
+                return None
+
     entry = signal.get("entry") or signal.get("price")
     stop = signal.get("sl") or signal.get("stop_loss")
     rr = signal.get("rr_ratio")
     action = str(signal.get("action") or "").upper().strip()
+
     try:
         entry = float(entry)
         stop = float(stop)
         rr = float(rr)
     except Exception:
         return None
+
     if rr <= 0:
         return None
+
     risk = abs(entry - stop)
     if risk <= 0:
         return None
+
     if action == "BUY":
         return entry + risk * rr
     if action == "SELL":
         return entry - risk * rr
     return None
-
 
 
 def run_auto_trade(config: dict):
@@ -77,7 +85,7 @@ def run_auto_trade(config: dict):
         max_daily_loss_pct=float(config.get("max_daily_loss_pct", 5.0)),
         max_open_positions=int(config.get("max_open_positions", 1)),
         max_consecutive_losses=int(config.get("max_consecutive_losses", 3)),
-        max_stop_loss_pct=float(config.get("max_stop_loss_pct", 5.0)),
+        max_stop_loss_pct=float(config.get("max_stop_loss_pct", config.get("max_sl_pct", 5.0))),
     )
 
     if not risk.allowed:
@@ -129,6 +137,11 @@ def run_auto_trade(config: dict):
         exit_order_warnings=order.get("exit_order_warnings") or [],
         applied_leverage=order.get("applied_leverage"),
         notional_estimate=order.get("notional_estimate"),
+        order_meta={
+            "market_symbol": order.get("market_symbol"),
+            "requested_leverage": order.get("requested_leverage"),
+            "applied_leverage": order.get("applied_leverage"),
+        },
     )
     record_trade(signal)
 
@@ -137,5 +150,5 @@ def run_auto_trade(config: dict):
         "mode": "auto_trade",
         "signal": signal,
         "order": order,
-        "reason": f"Trade executed with dynamic sizing ({risk_per_trade_pct}% risk)",
+        "reason": f"Trade executed with dynamic sizing ({risk_per_trade_pct}% risk) and TP/SL placement",
     }
