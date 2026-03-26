@@ -238,36 +238,59 @@ def _run_bot_cycle(config: dict) -> dict:
         ttl = int(config.get("scan_cache_ttl_seconds", 45))
         params = _build_scan_params_from_config(config)
         if _scan_cache_fresh(ttl) and _SCAN_CACHE["params"] == params:
-            _log("using cached scan result")
-            scan_result = _SCAN_CACHE["data"]
+               _log("using cached scan result")
+               scan_result = _SCAN_CACHE["data"]
         else:
-            scan_result = _run_and_cache_scan(**params)
+         scan_result = _run_and_cache_scan(**params)
 
-        if available_balance is not None and available_balance < min_balance:
-            _log(f"balance gate active available={available_balance:.4f} min={min_balance:.4f}")
-            return {
-                "ok": True,
-                "mode": "scan_only",
-                "available_balance_usdt": available_balance,
-                "min_available_balance_usdt": min_balance,
-                "scan_result": scan_result,
-                "open_positions": state.get("open_positions") or {},
-                "reason": f"Available balance below {min_balance:.2f} USDT. Scanning only; trading paused.",
-            }
+         if available_balance is not None and available_balance < min_balance:
+             _log(f"balance gate active available={available_balance:.4f} min={min_balance:.4f}")
+             return {
+              "ok": True,
+              "mode": "scan_only",
+             "available_balance_usdt": available_balance,
+             "min_available_balance_usdt": min_balance,
+             "scan_result": scan_result,
+             "open_positions": state.get("open_positions") or {},
+              "reason": f"Available balance below {min_balance:.2f} USDT. Scanning only; trading paused.",
+          }
 
+    try:
         result = run_auto_hunter(config, scan_result=scan_result)
+    except Exception as e:
+        _log(f"hunter error: {e}")
+        result = {
+            "ok": False,
+            "mode": "hunter_error",
+            "available_balance_usdt": available_balance,
+            "min_available_balance_usdt": min_balance,
+            "open_positions": state.get("open_positions") or {},
+            "reason": str(e),
+        }
     else:
-        if available_balance is not None and available_balance < min_balance:
-            _log(f"balance gate active available={available_balance:.4f} min={min_balance:.4f}")
-            return {
-                "ok": True,
-                "mode": "waiting_for_balance",
-                "available_balance_usdt": available_balance,
-                "min_available_balance_usdt": min_balance,
-                "open_positions": state.get("open_positions") or {},
-                "reason": f"Available balance below {min_balance:.2f} USDT. Bot waiting for funds.",
-            }
+       if available_balance is not None and available_balance < min_balance:
+        _log(f"balance gate active available={available_balance:.4f} min={min_balance:.4f}")
+        return {
+            "ok": True,
+            "mode": "waiting_for_balance",
+            "available_balance_usdt": available_balance,
+            "min_available_balance_usdt": min_balance,
+            "open_positions": state.get("open_positions") or {},
+            "reason": f"Available balance below {min_balance:.2f} USDT. Bot waiting for funds.",
+        }
+
+    try:
         result = run_auto_trade(config)
+    except Exception as e:
+        _log(f"trade error: {e}")
+        result = {
+            "ok": False,
+            "mode": "trade_error",
+            "available_balance_usdt": available_balance,
+            "min_available_balance_usdt": min_balance,
+            "open_positions": state.get("open_positions") or {},
+            "reason": str(e),
+        }
 
     result.setdefault("available_balance_usdt", available_balance)
     result.setdefault("min_available_balance_usdt", min_balance)
