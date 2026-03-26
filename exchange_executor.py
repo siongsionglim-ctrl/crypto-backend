@@ -523,39 +523,66 @@ def discover_scan_symbols(
     }
 
     for symbol, market in markets.items():
-        if not symbol.endswith(f"/{quote_asset}"):
+
+    # 🚨 FIX 1: symbol must be valid
+    if not symbol or not isinstance(symbol, str):
+        continue
+
+    # only USDT pairs
+    if not symbol.endswith(f"/{quote_asset}"):
+        continue
+
+    # must be active
+    if not market.get("active", False):
+        continue
+
+    base = market.get("base")
+
+    # 🚨 FIX 2: base must exist
+    if not base or not isinstance(base, str):
+        continue
+
+    # ❌ skip stablecoin / fiat pairs
+    if base in skip_bases:
+        continue
+
+    # 🚨 FIX 3: futures only
+    if market_type == "future":
+        if not (market.get("swap") or market.get("future") or market.get("contract")):
             continue
 
-        if not market.get("active", False):
-            continue
-
-        base = str(market.get("base") or "")
-
-        # ❌ skip stablecoin pairs
-        if base in skip_bases:
-            continue
-
-        # ✅ ensure futures market only
-        if market_type == "future":
-            if not (market.get("swap") or market.get("future") or market.get("contract")):
-                continue
-
-        candidates.append(symbol)
+    candidates.append(symbol)
 
     tickers = ex.fetch_tickers(candidates)
     scored = []
 
-    for sym, data in tickers.items():
-        vol = data.get("quoteVolume", 0)
+for sym, data in tickers.items():
+    vol = data.get("quoteVolume", 0)
 
-        if vol and vol >= min_quote_volume:
-            market = markets.get(sym, {})
-            base = str(market.get("base") or "")
-            quote = str(market.get("quote") or quote_asset)
+    if not vol or vol < min_quote_volume:
+        continue
 
-            # convert BTC/USDT → BTCUSDT
-            scored.append((f"{base}{quote}", vol))
+    market = markets.get(sym)
+    if not market:
+        continue
 
+    base = market.get("base")
+    quote = market.get("quote")
+
+    # 🚨 FIX 4: avoid None crash
+    if not base or not quote:
+        continue
+
+    if not isinstance(base, str) or not isinstance(quote, str):
+        continue
+
+    symbol_clean = f"{base}{quote}"
+
+    # extra safety
+    if len(symbol_clean) < 6:
+        continue
+
+    scored.append((symbol_clean, vol))
     scored.sort(key=lambda x: x[1], reverse=True)
 
     result = [s[0] for s in scored[:limit]]
