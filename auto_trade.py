@@ -4,13 +4,6 @@ from engine.trading_engine import generate_signal
 from exchange_executor import place_market_order
 from risk_manager import evaluate_risk, record_trade, register_open_position
 
-if not symbol or not isinstance(symbol, str):
-    return {
-        "ok": False,
-        "mode": "trade_error",
-        "reason": f"Invalid symbol: {symbol}",
-    }
-
 def normalize_side(action: str | None):
     if not action:
         return None
@@ -59,6 +52,12 @@ def _resolve_take_profit(signal: dict) -> float | None:
 
 def run_auto_trade(config: dict):
     symbol = config["symbol"]
+    if not symbol or not isinstance(symbol, str):
+         return {
+            "ok": False,
+            "mode": "trade_error",
+            "reason": f"Invalid symbol: {symbol}",
+         }
     auto_trade = config.get("auto_trade", False)
     amount = float(config.get("amount", 0.001))
     risk_per_trade_pct = float(config.get("risk_per_trade_pct", 1.0))

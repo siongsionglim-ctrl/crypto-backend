@@ -4,13 +4,6 @@ from engine.scanner_engine import scan_symbols
 from exchange_executor import place_market_order
 from risk_manager import evaluate_risk, record_trade, register_open_position
 
-if not symbol or not isinstance(symbol, str):
-    return {
-        "ok": False,
-        "mode": "trade_error",
-        "reason": f"Invalid symbol: {symbol}",
-    }
-
 
 def normalize_side(action: str | None):
     if not action:
@@ -57,6 +50,15 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         }
 
     best = top[0]
+    symbol = best.get("symbol")
+    if not symbol or not isinstance(symbol, str):
+         return {
+             "ok": False,
+             "mode": "hunter_error",
+             "scan_result": scan_result,
+             "reason": f"Invalid symbol: {symbol}",
+         }
+    
     action = best.get("action")
     side = normalize_side(action)
 
@@ -109,7 +111,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         api_key=config["api_key"],
         secret=config["secret"],
         passphrase=config.get("passphrase"),
-        symbol=best["symbol"],
+        symbol=symbol,
         side=side,
         amount=float(config.get("amount", 0.001)),
         testnet=bool(config.get("testnet", True)),
@@ -123,7 +125,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
     )
 
     register_open_position(
-        best["symbol"],
+        symbol,
         best.get("action", side).upper(),
         float(order.get("amount") or config.get("amount", 0.001)),
         entry_price,
