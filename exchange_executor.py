@@ -525,31 +525,31 @@ def discover_scan_symbols(
     for symbol, market in markets.items():
 
     # 🚨 FIX 1: symbol must be valid
-    if not symbol or not isinstance(symbol, str):
-        continue
+        if not symbol or not isinstance(symbol, str):
+          continue
 
-    # only USDT pairs
-    if not symbol.endswith(f"/{quote_asset}"):
-        continue
+         # only USDT pairs
+        if not symbol.endswith(f"/{quote_asset}"):
+          continue
 
-    # must be active
-    if not market.get("active", False):
-        continue
+         # must be active
+        if not market.get("active", False):
+            continue
 
-    base = market.get("base")
+        base = market.get("base")
 
     # 🚨 FIX 2: base must exist
-    if not base or not isinstance(base, str):
-        continue
+        if not base or not isinstance(base, str):
+           continue
 
     # ❌ skip stablecoin / fiat pairs
-    if base in skip_bases:
-        continue
+        if base in skip_bases:
+            continue
 
     # 🚨 FIX 3: futures only
-    if market_type == "future":
-        if not (market.get("swap") or market.get("future") or market.get("contract")):
-            continue
+        if market_type == "future":
+             if not (market.get("swap") or market.get("future") or market.get("contract")):
+                 continue
 
     candidates.append(symbol)
 
