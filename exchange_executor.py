@@ -504,6 +504,7 @@ def discover_scan_symbols(
     limit=20,
     cache_ttl_seconds=120,
 ):
+
     ex = build_exchange(
         exchange_name=exchange_name,
         api_key=api_key,
@@ -516,77 +517,67 @@ def discover_scan_symbols(
     markets = ex.load_markets()
     candidates = []
 
-    # 🚨 filter bad base assets
-    skip_bases = {
-        "USDT", "USDC", "BUSD", "TUSD", "FDUSD", "USD1",
-        "EUR", "GBP", "TRY", "BRL", "AUD", "RUB",
-    }
+    skip_bases = {"USDT", "BUSD", "USDC", "FDUSD", "TUSD"}
 
+    # ✅ LOOP (must be inside function)
     for symbol, market in markets.items():
 
-    # 🚨 FIX 1: symbol must be valid
         if not symbol or not isinstance(symbol, str):
-          continue
+            continue
 
-         # only USDT pairs
         if not symbol.endswith(f"/{quote_asset}"):
-          continue
+            continue
 
-         # must be active
         if not market.get("active", False):
             continue
 
         base = market.get("base")
 
-    # 🚨 FIX 2: base must exist
         if not base or not isinstance(base, str):
-           continue
+            continue
 
-    # ❌ skip stablecoin / fiat pairs
         if base in skip_bases:
             continue
 
-    # 🚨 FIX 3: futures only
         if market_type == "future":
-             if not (market.get("swap") or market.get("future") or market.get("contract")):
-                 continue
+            if not (market.get("swap") or market.get("future") or market.get("contract")):
+                continue
 
-    candidates.append(symbol)
+        candidates.append(symbol)
 
     tickers = ex.fetch_tickers(candidates)
     scored = []
 
-for sym, data in tickers.items():
-    vol = data.get("quoteVolume", 0)
+    # ✅ SECOND LOOP
+    for sym, data in tickers.items():
+        vol = data.get("quoteVolume", 0)
 
-    if not vol or vol < min_quote_volume:
-        continue
+        if not vol or vol < min_quote_volume:
+            continue
 
-    market = markets.get(sym)
-    if not market:
-        continue
+        market = markets.get(sym)
+        if not market:
+            continue
 
-    base = market.get("base")
-    quote = market.get("quote")
+        base = market.get("base")
+        quote = market.get("quote")
 
-    # 🚨 FIX 4: avoid None crash
-    if not base or not quote:
-        continue
+        if not base or not quote:
+            continue
 
-    if not isinstance(base, str) or not isinstance(quote, str):
-        continue
+        if not isinstance(base, str) or not isinstance(quote, str):
+            continue
 
-    symbol_clean = f"{base}{quote}"
+        symbol_clean = f"{base}{quote}"
 
-    # extra safety
-    if len(symbol_clean) < 6:
-        continue
+        if len(symbol_clean) < 6:
+            continue
 
-    scored.append((symbol_clean, vol))
+        scored.append((symbol_clean, vol))
+
     scored.sort(key=lambda x: x[1], reverse=True)
 
     result = [s[0] for s in scored[:limit]]
 
-    print(f"[AUTO SCAN] symbols={result}")
-
+    # ✅ THIS MUST BE INSIDE FUNCTION
     return result
