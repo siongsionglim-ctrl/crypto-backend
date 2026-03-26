@@ -41,13 +41,16 @@ _SCAN_CACHE: dict = {
 BOT_META_FILE = Path("bot_runtime_meta.json")
 
 
-def _log(message: str) -> None:
-    """Safe logging that prevents NoneType errors"""
-    if message is None:
-        message = "[None]"
-    else:
-        message = str(message)
-    print(f"[BOT] {message}", flush=True)
+def _log(message: any) -> None:
+    """Ultra safe logging"""
+    try:
+        if message is None:
+            msg = "[None]"
+        else:
+            msg = str(message)
+        print(f"[BOT] {msg}", flush=True)
+    except Exception:
+        print("[BOT] [Logging failed - bad message]", flush=True)
 
 
 def _load_meta() -> dict:
