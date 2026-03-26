@@ -4,6 +4,13 @@ from engine.scanner_engine import scan_symbols
 from exchange_executor import place_market_order
 from risk_manager import evaluate_risk, record_trade, register_open_position
 
+if not symbol or not isinstance(symbol, str):
+    return {
+        "ok": False,
+        "mode": "trade_error",
+        "reason": f"Invalid symbol: {symbol}",
+    }
+
 
 def normalize_side(action: str | None):
     if not action:
