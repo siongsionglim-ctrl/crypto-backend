@@ -18,12 +18,7 @@ def normalize_side(action: str | None):
 
 def run_auto_hunter(config: dict, scan_result: dict | None = None):
     symbols = config.get("scan_symbols") or [
-        "BTCUSDT",
-        "ETHUSDT",
-        "SOLUSDT",
-        "XRPUSDT",
-        "BNBUSDT",
-        "SUIUSDT",
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "SUIUSDT",
     ]
 
     if scan_result is None:
@@ -46,19 +41,19 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "mode": "hunter_signal_only",
             "scan_result": scan_result,
             "fallback_symbol": fallback_symbol,
-            "reason": "No qualified opportunities found",
+            "reason": "No qualified opportunities found in scan",
         }
 
     best = top[0]
     symbol = best.get("symbol")
     if not symbol or not isinstance(symbol, str):
-         return {
-             "ok": False,
-             "mode": "hunter_error",
-             "scan_result": scan_result,
-             "reason": f"Invalid symbol: {symbol}",
-         }
-    
+        return {
+            "ok": False,
+            "mode": "hunter_error",
+            "scan_result": scan_result,
+            "reason": f"Invalid symbol from scanner: {symbol}",
+        }
+
     action = best.get("action")
     side = normalize_side(action)
 
@@ -68,7 +63,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "mode": "hunter_signal_only",
             "best_signal": best,
             "scan_result": scan_result,
-            "reason": "Top setup is not executable",
+            "reason": "Top setup is not executable (no valid BUY/SELL action)",
         }
 
     risk = evaluate_risk(
@@ -90,7 +85,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "mode": "hunter_signal_only",
             "best_signal": best,
             "scan_result": scan_result,
-            "reason": risk.reason,
+            "reason": risk.reason or "Risk check failed",
         }
 
     if not config.get("auto_trade", False):
@@ -99,30 +94,39 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "mode": "hunter_signal_only",
             "best_signal": best,
             "scan_result": scan_result,
-            "reason": "Auto trade disabled",
+            "reason": "Auto trade disabled in config",
         }
 
     entry_price = best.get("entry") or best.get("price")
     stop_loss = best.get("sl") or best.get("stop_loss")
     take_profit = best.get("tp") or best.get("take_profit")
 
-    order = place_market_order(
-        exchange_name=config["exchange"],
-        api_key=config["api_key"],
-        secret=config["secret"],
-        passphrase=config.get("passphrase"),
-        symbol=symbol,
-        side=side,
-        amount=float(config.get("amount", 0.001)),
-        testnet=bool(config.get("testnet", True)),
-        market_type=config.get("market_type", "future"),
-        leverage=int(config.get("leverage", 3)),
-        auto_leverage=bool(config.get("auto_leverage", True)),
-        risk_per_trade_pct=float(config.get("risk_per_trade_pct", 1.0)),
-        entry_price=entry_price,
-        stop_loss=stop_loss,
-        take_profit=take_profit,
-    )
+    try:
+        order = place_market_order(
+            exchange_name=config["exchange"],
+            api_key=config["api_key"],
+            secret=config["secret"],
+            passphrase=config.get("passphrase"),
+            symbol=symbol,
+            side=side,
+            amount=float(config.get("amount", 0.001)),
+            testnet=bool(config.get("testnet", True)),
+            market_type=config.get("market_type", "future"),
+            leverage=int(config.get("leverage", 3)),
+            auto_leverage=bool(config.get("auto_leverage", True)),
+            risk_per_trade_pct=float(config.get("risk_per_trade_pct", 1.0)),
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+        )
+    except Exception as e:
+        return {
+            "ok": False,
+            "mode": "hunter_error",
+            "best_signal": best,
+            "scan_result": scan_result,
+            "reason": f"Failed to place order: {e}",
+        }
 
     register_open_position(
         symbol,
@@ -148,5 +152,5 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         "best_signal": best,
         "scan_result": scan_result,
         "order": order,
-        "reason": "Auto Hunter trade executed with TP/SL placement",
+        "reason": "Auto Hunter trade executed successfully with TP/SL",
     }

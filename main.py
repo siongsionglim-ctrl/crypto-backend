@@ -292,9 +292,10 @@ def _run_bot_cycle(config: dict) -> dict:
             "reason": str(e),
         }
 
-    result.setdefault("available_balance_usdt", available_balance)
-    result.setdefault("min_available_balance_usdt", min_balance)
-    _log(f"cycle result mode={result.get('mode')} reason={result.get('reason')}")
+    mode = result.get("mode") or "unknown"
+    reason = result.get("reason") or ""
+    _log(f"cycle result mode={mode} reason={reason}")
+
     return result
 
 

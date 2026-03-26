@@ -4,6 +4,7 @@ from engine.trading_engine import generate_signal
 from exchange_executor import place_market_order
 from risk_manager import evaluate_risk, record_trade, register_open_position
 
+
 def normalize_side(action: str | None):
     if not action:
         return None
@@ -53,11 +54,12 @@ def _resolve_take_profit(signal: dict) -> float | None:
 def run_auto_trade(config: dict):
     symbol = config["symbol"]
     if not symbol or not isinstance(symbol, str):
-         return {
+        return {
             "ok": False,
             "mode": "trade_error",
             "reason": f"Invalid symbol: {symbol}",
-         }
+        }
+
     auto_trade = config.get("auto_trade", False)
     amount = float(config.get("amount", 0.001))
     risk_per_trade_pct = float(config.get("risk_per_trade_pct", 1.0))
@@ -69,6 +71,7 @@ def run_auto_trade(config: dict):
         market_type=config.get("market_type", "future"),
         testnet=bool(config.get("testnet", True)),
     )
+
     action = signal.get("action")
     side = normalize_side(action)
 
@@ -77,7 +80,7 @@ def run_auto_trade(config: dict):
             "ok": True,
             "mode": "signal_only",
             "signal": signal,
-            "reason": "No executable signal",
+            "reason": "No executable signal (action is None or HOLD)",
         }
 
     risk = evaluate_risk(
@@ -98,7 +101,7 @@ def run_auto_trade(config: dict):
             "ok": True,
             "mode": "signal_only",
             "signal": signal,
-            "reason": risk.reason,
+            "reason": risk.reason or "Risk check failed",
         }
 
     if not auto_trade:
@@ -106,30 +109,38 @@ def run_auto_trade(config: dict):
             "ok": True,
             "mode": "signal_only",
             "signal": signal,
-            "reason": "Auto trade disabled",
+            "reason": "Auto trade disabled in config",
         }
 
     entry_price = signal.get("entry") or signal.get("price")
     stop_loss = signal.get("sl") or signal.get("stop_loss")
     take_profit = _resolve_take_profit(signal)
 
-    order = place_market_order(
-        exchange_name=config["exchange"],
-        api_key=config["api_key"],
-        secret=config["secret"],
-        passphrase=config.get("passphrase"),
-        symbol=symbol,
-        side=side,
-        amount=amount,
-        testnet=bool(config.get("testnet", True)),
-        market_type=config.get("market_type", "future"),
-        leverage=int(config.get("leverage", 3)),
-        auto_leverage=bool(config.get("auto_leverage", True)),
-        risk_per_trade_pct=risk_per_trade_pct,
-        entry_price=entry_price,
-        stop_loss=stop_loss,
-        take_profit=take_profit,
-    )
+    try:
+        order = place_market_order(
+            exchange_name=config["exchange"],
+            api_key=config["api_key"],
+            secret=config["secret"],
+            passphrase=config.get("passphrase"),
+            symbol=symbol,
+            side=side,
+            amount=amount,
+            testnet=bool(config.get("testnet", True)),
+            market_type=config.get("market_type", "future"),
+            leverage=int(config.get("leverage", 3)),
+            auto_leverage=bool(config.get("auto_leverage", True)),
+            risk_per_trade_pct=risk_per_trade_pct,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+        )
+    except Exception as e:
+        return {
+            "ok": False,
+            "mode": "trade_error",
+            "signal": signal,
+            "reason": f"Failed to place order: {e}",
+        }
 
     register_open_position(
         symbol,
@@ -155,5 +166,5 @@ def run_auto_trade(config: dict):
         "mode": "auto_trade",
         "signal": signal,
         "order": order,
-        "reason": f"Trade executed with dynamic sizing ({risk_per_trade_pct}% risk) and TP/SL placement",
+        "reason": f"Trade executed successfully with dynamic sizing ({risk_per_trade_pct}% risk)",
     }
