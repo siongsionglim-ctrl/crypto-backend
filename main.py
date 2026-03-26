@@ -220,6 +220,8 @@ def _run_bot_cycle(config: dict) -> dict:
     min_balance = float(config.get("min_available_balance_usdt", 5.0))
     available_balance = _check_available_balance(config)
 
+    result = None
+
     # === Hunter Mode ===
     if config.get("hunter_enabled", False):
         ttl = int(config.get("scan_cache_ttl_seconds", 45))
@@ -253,10 +255,10 @@ def _run_bot_cycle(config: dict) -> dict:
                 "available_balance_usdt": available_balance,
                 "min_available_balance_usdt": min_balance,
                 "open_positions": state.get("open_positions") or {},
-                "reason": f"Hunter error: {e}",
+                "reason": f"Hunter error: {str(e)}",
             }
 
-    # === Normal Auto Trade Mode (when hunter is disabled) ===
+    # === Normal Auto Trade Mode ===
     else:
         try:
             result = run_auto_trade(config)
@@ -268,16 +270,23 @@ def _run_bot_cycle(config: dict) -> dict:
                 "available_balance_usdt": available_balance,
                 "min_available_balance_usdt": min_balance,
                 "open_positions": state.get("open_positions") or {},
-                "reason": f"Trade error: {e}",
+                "reason": f"Trade execution error: {str(e)}",
             }
 
-    # Final safety
+    # Final safety net - ensure result is always a valid dict with string reason
+    if not isinstance(result, dict):
+        result = {
+            "ok": False,
+            "mode": "unknown",
+            "reason": "Invalid result from trade/hunter function"
+        }
+
     result.setdefault("available_balance_usdt", available_balance)
     result.setdefault("min_available_balance_usdt", min_balance)
 
-    # Safe logging - prevents the previous NoneType error
-    mode = result.get("mode") or "unknown"
-    reason = result.get("reason") or "no reason provided"
+    # === ULTRA SAFE LOGGING ===
+    mode = str(result.get("mode") or "unknown")
+    reason = str(result.get("reason") or "no reason provided")
     
     _log(f"cycle result → mode={mode} | reason={reason}")
 
