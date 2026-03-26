@@ -214,13 +214,17 @@ def _run_and_cache_scan(*, symbols=None, min_confidence_pct=55.0, min_rr_ratio=1
 
 
 def _run_bot_cycle(config: dict) -> dict:
+    # Sync positions first
     state = _sync_open_positions_with_exchange(config, force=True)
+    
     min_balance = float(config.get("min_available_balance_usdt", 5.0))
     available_balance = _check_available_balance(config)
 
+    # === Hunter Mode ===
     if config.get("hunter_enabled", False):
         ttl = int(config.get("scan_cache_ttl_seconds", 45))
         params = _build_scan_params_from_config(config)
+        
         if _scan_cache_fresh(ttl) and _SCAN_CACHE["params"] == params:
             _log("using cached scan result")
             scan_result = _SCAN_CACHE["data"]
@@ -236,13 +240,11 @@ def _run_bot_cycle(config: dict) -> dict:
                 "min_available_balance_usdt": min_balance,
                 "scan_result": scan_result,
                 "open_positions": state.get("open_positions") or {},
-                "reason": f"Available balance below {min_balance:.2f} USDT. Scanning only; trading paused.",
+                "reason": f"Available balance below {min_balance:.2f} USDT. Scanning only.",
             }
 
-    # Run Hunter if enabled
-    if config.get("hunter_enabled", False):
         try:
-            result = run_auto_hunter(config, scan_result=scan_result if 'scan_result' in locals() else None)
+            result = run_auto_hunter(config, scan_result=scan_result)
         except Exception as e:
             _log(f"hunter error: {e}")
             result = {
@@ -253,8 +255,9 @@ def _run_bot_cycle(config: dict) -> dict:
                 "open_positions": state.get("open_positions") or {},
                 "reason": f"Hunter error: {e}",
             }
+
+    # === Normal Auto Trade Mode (when hunter is disabled) ===
     else:
-        # Run normal auto trade
         try:
             result = run_auto_trade(config)
         except Exception as e:
@@ -268,17 +271,49 @@ def _run_bot_cycle(config: dict) -> dict:
                 "reason": f"Trade error: {e}",
             }
 
+    # Final safety
     result.setdefault("available_balance_usdt", available_balance)
     result.setdefault("min_available_balance_usdt", min_balance)
 
-    # FIXED: Safe logging - this was causing the "can only concatenate str (not "NoneType")" error
+    # Safe logging - prevents the previous NoneType error
     mode = result.get("mode") or "unknown"
-    reason = result.get("reason") or "no reason"
+    reason = result.get("reason") or "no reason provided"
     
     _log(f"cycle result → mode={mode} | reason={reason}")
 
     return result
 
+def _check_available_balance(config: dict) -> float | None:
+    """Check available USDT balance safely"""
+    if not _has_exchange_credentials(config):
+        return None
+    
+    try:
+        available = get_available_balance_usdt(
+            exchange_name=config.get("exchange", "binance"),
+            api_key=config.get("api_key", ""),
+            secret=config.get("secret", ""),
+            passphrase=config.get("passphrase"),
+            testnet=bool(config.get("testnet", True)),
+            market_type=config.get("market_type", "future"),
+            cache_ttl_seconds=int(config.get("balance_cache_ttl_seconds", 25)),
+        )
+        
+        # Update state snapshot
+        set_balance_snapshot(available)
+        return available
+    except Exception as e:
+        _log(f"balance check failed: {e}")
+        # Return last known balance if available
+        state = get_state()
+        return state.get("balance_snapshot")
+
+
+def _has_exchange_credentials(config: dict) -> bool:
+    """Check if API keys are configured"""
+    api_key = (config.get("api_key") or "").strip()
+    secret = (config.get("secret") or "").strip()
+    return bool(api_key and secret)
 
 @app.get("/")
 def root():
