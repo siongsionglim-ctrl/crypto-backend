@@ -42,6 +42,11 @@ BOT_META_FILE = Path("bot_runtime_meta.json")
 
 
 def _log(message: str) -> None:
+    """Safe logging that prevents NoneType errors"""
+    if message is None:
+        message = "[None]"
+    else:
+        message = str(message)
     print(f"[BOT] {message}", flush=True)
 
 
@@ -208,27 +213,6 @@ def _run_and_cache_scan(*, symbols=None, min_confidence_pct=55.0, min_rr_ratio=1
     return result
 
 
-def _check_available_balance(config: dict) -> float | None:
-    if not _has_exchange_credentials(config):
-        return None
-    state = get_state()
-    cached_balance = state.get("balance_snapshot")
-    available = get_available_balance_usdt(
-        exchange_name=config.get("exchange", "binance"),
-        api_key=config.get("api_key", ""),
-        secret=config.get("secret", ""),
-        passphrase=config.get("passphrase"),
-        testnet=bool(config.get("testnet", True)),
-        market_type=config.get("market_type", "future"),
-        cache_ttl_seconds=int(config.get("balance_cache_ttl_seconds", 25)),
-    )
-    if available == 0.0 and cached_balance not in (None, 0, 0.0):
-        set_balance_snapshot(cached_balance, note="Reused cached balance after temporary fetch issue")
-        return float(cached_balance)
-    set_balance_snapshot(available)
-    return available
-
-
 def _run_bot_cycle(config: dict) -> dict:
     state = _sync_open_positions_with_exchange(config, force=True)
     min_balance = float(config.get("min_available_balance_usdt", 5.0))
@@ -238,63 +222,60 @@ def _run_bot_cycle(config: dict) -> dict:
         ttl = int(config.get("scan_cache_ttl_seconds", 45))
         params = _build_scan_params_from_config(config)
         if _scan_cache_fresh(ttl) and _SCAN_CACHE["params"] == params:
-               _log("using cached scan result")
-               scan_result = _SCAN_CACHE["data"]
+            _log("using cached scan result")
+            scan_result = _SCAN_CACHE["data"]
         else:
-         scan_result = _run_and_cache_scan(**params)
+            scan_result = _run_and_cache_scan(**params)
 
-         if available_balance is not None and available_balance < min_balance:
-             _log(f"balance gate active available={available_balance:.4f} min={min_balance:.4f}")
-             return {
-              "ok": True,
-              "mode": "scan_only",
-             "available_balance_usdt": available_balance,
-             "min_available_balance_usdt": min_balance,
-             "scan_result": scan_result,
-             "open_positions": state.get("open_positions") or {},
-              "reason": f"Available balance below {min_balance:.2f} USDT. Scanning only; trading paused.",
-          }
+        if available_balance is not None and available_balance < min_balance:
+            _log(f"balance gate active available={available_balance:.4f} min={min_balance:.4f}")
+            return {
+                "ok": True,
+                "mode": "scan_only",
+                "available_balance_usdt": available_balance,
+                "min_available_balance_usdt": min_balance,
+                "scan_result": scan_result,
+                "open_positions": state.get("open_positions") or {},
+                "reason": f"Available balance below {min_balance:.2f} USDT. Scanning only; trading paused.",
+            }
 
-    try:
-        result = run_auto_hunter(config, scan_result=scan_result)
-    except Exception as e:
-        _log(f"hunter error: {e}")
-        result = {
-            "ok": False,
-            "mode": "hunter_error",
-            "available_balance_usdt": available_balance,
-            "min_available_balance_usdt": min_balance,
-            "open_positions": state.get("open_positions") or {},
-            "reason": str(e),
-        }
+    # Run Hunter if enabled
+    if config.get("hunter_enabled", False):
+        try:
+            result = run_auto_hunter(config, scan_result=scan_result if 'scan_result' in locals() else None)
+        except Exception as e:
+            _log(f"hunter error: {e}")
+            result = {
+                "ok": False,
+                "mode": "hunter_error",
+                "available_balance_usdt": available_balance,
+                "min_available_balance_usdt": min_balance,
+                "open_positions": state.get("open_positions") or {},
+                "reason": f"Hunter error: {e}",
+            }
     else:
-       if available_balance is not None and available_balance < min_balance:
-        _log(f"balance gate active available={available_balance:.4f} min={min_balance:.4f}")
-        return {
-            "ok": True,
-            "mode": "waiting_for_balance",
-            "available_balance_usdt": available_balance,
-            "min_available_balance_usdt": min_balance,
-            "open_positions": state.get("open_positions") or {},
-            "reason": f"Available balance below {min_balance:.2f} USDT. Bot waiting for funds.",
-        }
+        # Run normal auto trade
+        try:
+            result = run_auto_trade(config)
+        except Exception as e:
+            _log(f"trade error: {e}")
+            result = {
+                "ok": False,
+                "mode": "trade_error",
+                "available_balance_usdt": available_balance,
+                "min_available_balance_usdt": min_balance,
+                "open_positions": state.get("open_positions") or {},
+                "reason": f"Trade error: {e}",
+            }
 
-    try:
-        result = run_auto_trade(config)
-    except Exception as e:
-        _log(f"trade error: {e}")
-        result = {
-            "ok": False,
-            "mode": "trade_error",
-            "available_balance_usdt": available_balance,
-            "min_available_balance_usdt": min_balance,
-            "open_positions": state.get("open_positions") or {},
-            "reason": str(e),
-        }
+    result.setdefault("available_balance_usdt", available_balance)
+    result.setdefault("min_available_balance_usdt", min_balance)
 
+    # FIXED: Safe logging - this was causing the "can only concatenate str (not "NoneType")" error
     mode = result.get("mode") or "unknown"
-    reason = result.get("reason") or ""
-    _log(f"cycle result mode={mode} reason={reason}")
+    reason = result.get("reason") or "no reason"
+    
+    _log(f"cycle result → mode={mode} | reason={reason}")
 
     return result
 
