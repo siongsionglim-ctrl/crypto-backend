@@ -1,3 +1,5 @@
+import traceback
+
 from __future__ import annotations
 
 import json
@@ -91,7 +93,8 @@ def _bot_loop():
             meta["last_result"] = result
             _save_meta(meta)
         except Exception as e:
-            _log(f"loop error: {e}")
+             _log(f"loop error: {type(e).__name__}: {e}")
+             _log(traceback.format_exc())
 
         interval = int(config.get("loop_interval_sec", 60))
         time.sleep(max(5, interval))
