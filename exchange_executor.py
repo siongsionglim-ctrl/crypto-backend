@@ -545,7 +545,16 @@ def discover_scan_symbols(
 
         candidates.append(symbol)
 
-    tickers = ex.fetch_tickers(candidates)
+    candidates = [s for s in candidates if isinstance(s, str) and s.strip()]
+
+    if not candidates:
+         return []
+
+    try:
+            tickers = ex.fetch_tickers(candidates)
+    except Exception:
+    # fallback: return no discovered symbols instead of crashing bot loop
+         return []
     scored = []
 
     # ✅ SECOND LOOP

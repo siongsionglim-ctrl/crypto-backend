@@ -163,7 +163,8 @@ def _build_scan_params_from_config(config: dict) -> dict:
     symbols = config.get("scan_symbols")
 
     if auto_scan_enabled:
-        symbols = discover_scan_symbols(
+        try:
+            symbols = discover_scan_symbols(
             exchange_name=config.get("scan_exchange") or config.get("exchange", "binance"),
             api_key=config.get("api_key", ""),
             secret=config.get("secret", ""),
@@ -175,6 +176,9 @@ def _build_scan_params_from_config(config: dict) -> dict:
             min_quote_volume=float(config.get("auto_scan_min_quote_volume", 10000000.0)),
             cache_ttl_seconds=max(120, int(config.get("scan_cache_ttl_seconds", 45))),
         )
+        except Exception as e:
+            _log(f"discover_scan_symbols failed: {type(e).__name__}: {e}")
+            symbols = config.get("scan_symbols")
 
     if not symbols:
         fallback_symbol = config.get("fallback_symbol")
