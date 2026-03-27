@@ -1,4 +1,3 @@
-import traceback
 
 from __future__ import annotations
 
@@ -6,6 +5,7 @@ import json
 import threading
 import time
 from pathlib import Path
+import traceback
 
 from fastapi import FastAPI, HTTPException
 
