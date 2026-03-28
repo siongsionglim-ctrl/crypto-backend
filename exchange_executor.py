@@ -8,26 +8,23 @@ _BALANCE_CACHE: dict[tuple[str, str, str, str, bool, str], tuple[float, float]] 
 
 def build_exchange(exchange_name, api_key, secret, passphrase=None, testnet=True, market_type="future"):
     exchange_name = (exchange_name or "binance").lower()
-    #default_type = "future" if market_type == "future" else "spot"
-
-    #common = {
-      #  "apiKey": api_key,
-       # "secret": secret,
-       # "enableRateLimit": True,
-       # "options": {"defaultType": default_type, "adjustForTimeDifference": True},
-    #}
+    market_type = (market_type or "future").lower()
 
     if exchange_name == "binance":
-        options = {
-            "defaultType": "future" if market_type == "future" else "spot",
-        }
-
         ex = ccxt.binance({
-            "apiKey": api_key,
-            "secret": secret,
+            "apiKey": api_key or "",
+            "secret": secret or "",
             "enableRateLimit": True,
-            "options": options,
+            "options": {
+                "defaultType": "swap" if market_type == "future" else "spot",
+                "defaultSubType": "linear" if market_type == "future" else None,
+                "adjustForTimeDifference": True,
+            },
         })
+
+        if market_type == "future":
+            ex.options["defaultType"] = "swap"
+            ex.options["defaultSubType"] = "linear"
 
         if testnet and market_type == "future":
             ex.set_sandbox_mode(True)
@@ -35,38 +32,40 @@ def build_exchange(exchange_name, api_key, secret, passphrase=None, testnet=True
         return ex
 
     if exchange_name == "bybit":
-        options = {
-            "defaultType": "future" if market_type == "future" else "spot",
-        }
-
-        ex = ccxt.binance({
-            "apiKey": api_key,
-            "secret": secret,
+        ex = ccxt.bybit({
+            "apiKey": api_key or "",
+            "secret": secret or "",
             "enableRateLimit": True,
-            "options": options,
+            "options": {
+                "defaultType": "swap" if market_type == "future" else "spot",
+                "defaultSubType": "linear" if market_type == "future" else None,
+                "adjustForTimeDifference": True,
+            },
         })
 
         if testnet:
             ex.set_sandbox_mode(True)
+
         return ex
 
     if exchange_name == "okx":
-        options = {
-            "defaultType": "future" if market_type == "future" else "spot",
-        }
-
-        ex = ccxt.binance({
-            "apiKey": api_key,
-            "secret": secret,
+        ex = ccxt.okx({
+            "apiKey": api_key or "",
+            "secret": secret or "",
+            "password": passphrase or "",
             "enableRateLimit": True,
-            "options": options,
+            "options": {
+                "defaultType": "swap" if market_type == "future" else "spot",
+                "defaultSubType": "linear" if market_type == "future" else None,
+                "adjustForTimeDifference": True,
+            },
         })
-       # common["password"] = passphrase or ""
-       # ex = ccxt.okx(common)
+
         if testnet:
             ex.set_sandbox_mode(True)
-        return ex
 
+        print(f"[BOT DEBUG] exchange={exchange_name} market_type={market_type} options={ex.options}")
+        return ex
     raise ValueError(f"Unsupported exchange: {exchange_name}")
 
 
@@ -667,10 +666,10 @@ def discover_scan_symbols(
             if ":" in symbol:
                 continue
 
-    candidates.append(symbol)
+        candidates.append(symbol)
 
-    # clean + deduplicate
-    cleaned_candidates = []
+         # clean + deduplicate
+        cleaned_candidates = []
     for s in candidates:
         if s is None:
             continue
