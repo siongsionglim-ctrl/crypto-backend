@@ -728,11 +728,17 @@ def discover_scan_symbols(
         if not isinstance(quote, str) or not quote:
             continue
 
-        symbol_clean = symbol   # keep CCXT format
+        symbol_clean = f"{base}{quote}"
         scored.append((symbol_clean, vol))
 
     scored.sort(key=lambda x: x[1], reverse=True)
-    result = [sym for sym, _ in scored[:limit]]
+    #result = [sym for sym, _ in scored[:limit]]
+    result = []
+    for sym_clean, _ in scored:
+        if sym_clean not in result:
+            result.append(sym_clean)
+        if len(result) >= limit:
+            break
 
     print(f"[BOT] discover_scan_symbols final={result}")
     return result
