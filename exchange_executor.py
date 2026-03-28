@@ -621,7 +621,7 @@ def discover_scan_symbols(
                 continue
             if market.get("inverse", False):
                 continue
-            if market.get("settle") != quote_asset:
+            if f"/{quote_asset}" not in symbol:
                 continue
 
         elif market_type == "spot":
