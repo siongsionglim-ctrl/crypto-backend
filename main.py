@@ -163,7 +163,6 @@ def _build_scan_params_from_config(config: dict) -> dict:
         if value is None:
             return []
 
-        # If single string like "BTCUSDT" or "BTCUSDT,ETHUSDT"
         if isinstance(value, str):
             raw = [v.strip() for v in value.split(",")]
         elif isinstance(value, (list, tuple, set)):
@@ -180,7 +179,6 @@ def _build_scan_params_from_config(config: dict) -> dict:
                 continue
             cleaned.append(item)
 
-        # remove duplicates, keep order
         return list(dict.fromkeys(cleaned))
 
     auto_scan_enabled = bool(config.get("auto_scan_enabled", True))
@@ -212,8 +210,12 @@ def _build_scan_params_from_config(config: dict) -> dict:
         symbols = _clean_symbols([fallback_symbol])
 
     if not symbols:
-        default_symbol = config.get("symbol") or "BTCUSDT"
-        symbols = _clean_symbols([default_symbol])
+        default_symbols = [
+            "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT",
+            "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT",
+            "SUIUSDT", "TRXUSDT", "LTCUSDT", "BCHUSDT", "APTUSDT",
+        ]
+        symbols = _clean_symbols(default_symbols)
 
     _log(f"scan symbols final: {symbols}")
 

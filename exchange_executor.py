@@ -585,32 +585,38 @@ def discover_scan_symbols(
     skip_bases = {"USDT", "BUSD", "USDC", "FDUSD", "TUSD"}
 
     for symbol, market in markets.items():
-        if not symbol or not isinstance(symbol, str):
+        if not isinstance(symbol, str) or not symbol:
             continue
 
         if not isinstance(market, dict):
             continue
 
-        if not symbol.endswith(f"/{quote_asset}"):
-            continue
-
-        if not market.get("active", False):
-            continue
-
         base = market.get("base")
         quote = market.get("quote")
 
-        if not base or not isinstance(base, str):
+        if not isinstance(base, str) or not base:
             continue
 
-        if not quote or not isinstance(quote, str):
+        if not isinstance(quote, str) or not quote:
+            continue
+
+        # safer than symbol.endswith(...)
+        if quote != quote_asset:
             continue
 
         if base in skip_bases:
             continue
 
+        # only skip if explicitly inactive
+        if market.get("active") is False:
+            continue
+
         if market_type == "future":
-            if not (market.get("swap") or market.get("future") or market.get("contract")):
+            if not (
+                market.get("contract", False)
+                or market.get("swap", False)
+                or market.get("future", False)
+            ):
                 continue
         elif market_type == "spot":
             if not market.get("spot", False):
@@ -618,7 +624,7 @@ def discover_scan_symbols(
 
         candidates.append(symbol)
 
-    # remove bad / duplicate symbols
+    # clean + deduplicate
     cleaned_candidates = []
     for s in candidates:
         if s is None:
@@ -632,11 +638,13 @@ def discover_scan_symbols(
 
     cleaned_candidates = list(dict.fromkeys(cleaned_candidates))
 
+    print(f"[BOT DEBUG] total markets={len(markets)}")
+    print(f"[BOT DEBUG] candidates after filter={len(cleaned_candidates)}")
+    print(f"[BOT DEBUG] first 20 candidates={cleaned_candidates[:20]}")
+
     if not cleaned_candidates:
         print("[BOT] discover_scan_symbols: no valid candidates")
         return []
-
-    print(f"[BOT] discover_scan_symbols candidates={len(cleaned_candidates)}")
 
     try:
         tickers = ex.fetch_tickers(cleaned_candidates)
@@ -647,46 +655,39 @@ def discover_scan_symbols(
     scored = []
 
     for sym, data in tickers.items():
-        if not sym or not isinstance(sym, str):
+        if not isinstance(sym, str) or not sym:
             continue
 
         if not isinstance(data, dict):
             continue
 
-        vol = data.get("quoteVolume", 0)
-        if vol is None:
-            vol = 0
-
+        vol = data.get("quoteVolume") or 0
         try:
             vol = float(vol)
         except (TypeError, ValueError):
-            vol = 0
+            continue
 
         if vol < min_quote_volume:
             continue
 
+        # return plain symbol format for your bot, e.g. BTCUSDT
         market = markets.get(sym)
-        if not market or not isinstance(market, dict):
+        if not isinstance(market, dict):
             continue
 
         base = market.get("base")
         quote = market.get("quote")
 
-        if not base or not quote:
+        if not isinstance(base, str) or not base:
+            continue
+        if not isinstance(quote, str) or not quote:
             continue
 
-        if not isinstance(base, str) or not isinstance(quote, str):
-            continue
-
-        symbol_clean = f"{base}{quote}".strip()
-
-        if len(symbol_clean) < 6:
-            continue
-
+        symbol_clean = f"{base}{quote}"
         scored.append((symbol_clean, vol))
 
     scored.sort(key=lambda x: x[1], reverse=True)
-    result = [item[0] for item in scored[:limit]]
+    result = [sym for sym, _ in scored[:limit]]
 
     print(f"[BOT] discover_scan_symbols final={result}")
     return result
