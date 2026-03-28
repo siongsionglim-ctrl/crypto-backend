@@ -159,30 +159,63 @@ def _sync_open_positions_with_exchange(config: dict, force: bool = False) -> dic
 
 
 def _build_scan_params_from_config(config: dict) -> dict:
+    def _clean_symbols(value):
+        if value is None:
+            return []
+
+        # If single string like "BTCUSDT" or "BTCUSDT,ETHUSDT"
+        if isinstance(value, str):
+            raw = [v.strip() for v in value.split(",")]
+        elif isinstance(value, (list, tuple, set)):
+            raw = list(value)
+        else:
+            raw = [value]
+
+        cleaned = []
+        for item in raw:
+            if item is None:
+                continue
+            item = str(item).strip()
+            if not item:
+                continue
+            cleaned.append(item)
+
+        # remove duplicates, keep order
+        return list(dict.fromkeys(cleaned))
+
     auto_scan_enabled = bool(config.get("auto_scan_enabled", True))
-    symbols = config.get("scan_symbols")
+    symbols = _clean_symbols(config.get("scan_symbols"))
 
     if auto_scan_enabled:
         try:
-            symbols = discover_scan_symbols(
-            exchange_name=config.get("scan_exchange") or config.get("exchange", "binance"),
-            api_key=config.get("api_key", ""),
-            secret=config.get("secret", ""),
-            passphrase=config.get("passphrase"),
-            testnet=bool(config.get("testnet", True)),
-            market_type=config.get("scan_market_type") or config.get("market_type", "future"),
-            quote_asset=config.get("auto_scan_quote_asset", "USDT"),
-            limit=int(config.get("auto_scan_limit", 20)),
-            min_quote_volume=float(config.get("auto_scan_min_quote_volume", 10000000.0)),
-            cache_ttl_seconds=max(120, int(config.get("scan_cache_ttl_seconds", 45))),
-        )
+            discovered = discover_scan_symbols(
+                exchange_name=config.get("scan_exchange") or config.get("exchange", "binance"),
+                api_key=config.get("api_key", ""),
+                secret=config.get("secret", ""),
+                passphrase=config.get("passphrase"),
+                testnet=bool(config.get("testnet", True)),
+                market_type=config.get("scan_market_type") or config.get("market_type", "future"),
+                quote_asset=config.get("auto_scan_quote_asset", "USDT"),
+                limit=int(config.get("auto_scan_limit", 20)),
+                min_quote_volume=float(config.get("auto_scan_min_quote_volume", 10000000.0)),
+                cache_ttl_seconds=max(120, int(config.get("scan_cache_ttl_seconds", 45))),
+            )
+            discovered = _clean_symbols(discovered)
+            if discovered:
+                symbols = discovered
         except Exception as e:
             _log(f"discover_scan_symbols failed: {type(e).__name__}: {e}")
-            symbols = config.get("scan_symbols")
+            symbols = _clean_symbols(config.get("scan_symbols"))
 
     if not symbols:
         fallback_symbol = config.get("fallback_symbol")
-        symbols = [fallback_symbol] if fallback_symbol else config.get("scan_symbols")
+        symbols = _clean_symbols([fallback_symbol])
+
+    if not symbols:
+        default_symbol = config.get("symbol") or "BTCUSDT"
+        symbols = _clean_symbols([default_symbol])
+
+    _log(f"scan symbols final: {symbols}")
 
     return {
         "symbols": symbols,

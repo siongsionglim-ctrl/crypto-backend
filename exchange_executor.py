@@ -566,7 +566,6 @@ def discover_scan_symbols(
     limit=20,
     cache_ttl_seconds=120,
 ):
-
     ex = build_exchange(
         exchange_name=exchange_name,
         api_key=api_key,
@@ -576,15 +575,20 @@ def discover_scan_symbols(
         market_type=market_type,
     )
 
-    markets = ex.load_markets()
-    candidates = []
+    try:
+        markets = ex.load_markets()
+    except Exception as e:
+        print(f"[BOT] load_markets failed: {type(e).__name__}: {e}")
+        return []
 
+    candidates = []
     skip_bases = {"USDT", "BUSD", "USDC", "FDUSD", "TUSD"}
 
-    # ✅ LOOP (must be inside function)
     for symbol, market in markets.items():
-
         if not symbol or not isinstance(symbol, str):
+            continue
+
+        if not isinstance(market, dict):
             continue
 
         if not symbol.endswith(f"/{quote_asset}"):
@@ -594,8 +598,12 @@ def discover_scan_symbols(
             continue
 
         base = market.get("base")
+        quote = market.get("quote")
 
         if not base or not isinstance(base, str):
+            continue
+
+        if not quote or not isinstance(quote, str):
             continue
 
         if base in skip_bases:
@@ -604,21 +612,61 @@ def discover_scan_symbols(
         if market_type == "future":
             if not (market.get("swap") or market.get("future") or market.get("contract")):
                 continue
+        elif market_type == "spot":
+            if not market.get("spot", False):
+                continue
 
         candidates.append(symbol)
 
-    tickers = ex.fetch_tickers(candidates)
+    # remove bad / duplicate symbols
+    cleaned_candidates = []
+    for s in candidates:
+        if s is None:
+            continue
+        s = str(s).strip()
+        if not s:
+            continue
+        if s not in markets:
+            continue
+        cleaned_candidates.append(s)
+
+    cleaned_candidates = list(dict.fromkeys(cleaned_candidates))
+
+    if not cleaned_candidates:
+        print("[BOT] discover_scan_symbols: no valid candidates")
+        return []
+
+    print(f"[BOT] discover_scan_symbols candidates={len(cleaned_candidates)}")
+
+    try:
+        tickers = ex.fetch_tickers(cleaned_candidates)
+    except Exception as e:
+        print(f"[BOT] discover_scan_symbols fetch_tickers failed: {type(e).__name__}: {e}")
+        return []
+
     scored = []
 
-    # ✅ SECOND LOOP
     for sym, data in tickers.items():
-        vol = data.get("quoteVolume", 0)
+        if not sym or not isinstance(sym, str):
+            continue
 
-        if not vol or vol < min_quote_volume:
+        if not isinstance(data, dict):
+            continue
+
+        vol = data.get("quoteVolume", 0)
+        if vol is None:
+            vol = 0
+
+        try:
+            vol = float(vol)
+        except (TypeError, ValueError):
+            vol = 0
+
+        if vol < min_quote_volume:
             continue
 
         market = markets.get(sym)
-        if not market:
+        if not market or not isinstance(market, dict):
             continue
 
         base = market.get("base")
@@ -630,7 +678,7 @@ def discover_scan_symbols(
         if not isinstance(base, str) or not isinstance(quote, str):
             continue
 
-        symbol_clean = f"{base}{quote}"
+        symbol_clean = f"{base}{quote}".strip()
 
         if len(symbol_clean) < 6:
             continue
@@ -638,8 +686,7 @@ def discover_scan_symbols(
         scored.append((symbol_clean, vol))
 
     scored.sort(key=lambda x: x[1], reverse=True)
+    result = [item[0] for item in scored[:limit]]
 
-    result = [s[0] for s in scored[:limit]]
-
-    # ✅ THIS MUST BE INSIDE FUNCTION
+    print(f"[BOT] discover_scan_symbols final={result}")
     return result
