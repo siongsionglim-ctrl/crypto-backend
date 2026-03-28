@@ -7,31 +7,62 @@ _BALANCE_CACHE: dict[tuple[str, str, str, str, bool, str], tuple[float, float]] 
 
 
 def build_exchange(exchange_name, api_key, secret, passphrase=None, testnet=True, market_type="future"):
-    name = exchange_name.lower()
-    default_type = "future" if market_type == "future" else "spot"
+    exchange_name = (exchange_name or "binance").lower()
+    #default_type = "future" if market_type == "future" else "spot"
 
-    common = {
-        "apiKey": api_key,
-        "secret": secret,
-        "enableRateLimit": True,
-        "options": {"defaultType": default_type, "adjustForTimeDifference": True},
-    }
+    #common = {
+      #  "apiKey": api_key,
+       # "secret": secret,
+       # "enableRateLimit": True,
+       # "options": {"defaultType": default_type, "adjustForTimeDifference": True},
+    #}
 
-    if name == "binance":
-        ex = ccxt.binance(common)
+    if exchange_name == "binance":
+        options = {
+            "defaultType": "future" if market_type == "future" else "spot",
+        }
+
+        ex = ccxt.binance({
+            "apiKey": api_key,
+            "secret": secret,
+            "enableRateLimit": True,
+            "options": options,
+        })
+
+        if testnet and market_type == "future":
+            ex.set_sandbox_mode(True)
+
+        return ex
+
+    if exchange_name == "bybit":
+        options = {
+            "defaultType": "future" if market_type == "future" else "spot",
+        }
+
+        ex = ccxt.binance({
+            "apiKey": api_key,
+            "secret": secret,
+            "enableRateLimit": True,
+            "options": options,
+        })
+
         if testnet:
             ex.set_sandbox_mode(True)
         return ex
 
-    if name == "bybit":
-        ex = ccxt.bybit(common)
-        if testnet:
-            ex.set_sandbox_mode(True)
-        return ex
+    if exchange_name == "okx":
+        options = {
+            "defaultType": "future" if market_type == "future" else "spot",
+        }
 
-    if name == "okx":
-        common["password"] = passphrase or ""
-        ex = ccxt.okx(common)
+        ex = ccxt.binance({
+            "apiKey": api_key,
+            "secret": secret,
+            "enableRateLimit": True,
+            "options": options,
+        })
+       # common["password"] = passphrase or ""
+       # ex = ccxt.okx(common)
         if testnet:
             ex.set_sandbox_mode(True)
         return ex
@@ -600,8 +631,8 @@ def discover_scan_symbols(
         if not isinstance(quote, str) or not quote:
             continue
 
-        if quote != quote_asset:
-            continue
+        #if quote != quote_asset:
+          #  continue
 
         if base in skip_bases:
             continue
@@ -621,11 +652,19 @@ def discover_scan_symbols(
                 continue
             if market.get("inverse", False):
                 continue
+            if quote != quote_asset:
+                continue
             if f"/{quote_asset}" not in symbol:
+                continue
+            if not symbol.endswith(f":{quote_asset}"):
                 continue
 
         elif market_type == "spot":
             if not market.get("spot", False):
+                continue
+            if quote != quote_asset:
+                continue
+            if ":" in symbol:
                 continue
 
     candidates.append(symbol)
@@ -650,6 +689,7 @@ def discover_scan_symbols(
 
     if not cleaned_candidates:
         print("[BOT] discover_scan_symbols: no valid candidates")
+        print(f"[BOT DEBUG] first candidate raw market={markets.get(first)}")
         return []
 
     try:
