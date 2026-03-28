@@ -600,29 +600,35 @@ def discover_scan_symbols(
         if not isinstance(quote, str) or not quote:
             continue
 
-        # safer than symbol.endswith(...)
         if quote != quote_asset:
             continue
 
         if base in skip_bases:
             continue
 
-        # only skip if explicitly inactive
         if market.get("active") is False:
             continue
 
         if market_type == "future":
-            if not (
-                market.get("contract", False)
-                or market.get("swap", False)
-                or market.get("future", False)
-            ):
+        # keep only USDT-margined linear perpetual swaps
+            if not market.get("contract", False):
                 continue
+            if not market.get("swap", False):
+                continue
+            if market.get("future", False):
+                continue
+            if not market.get("linear", False):
+                continue
+            if market.get("inverse", False):
+                continue
+            if market.get("settle") != quote_asset:
+                continue
+
         elif market_type == "spot":
             if not market.get("spot", False):
                 continue
 
-        candidates.append(symbol)
+    candidates.append(symbol)
 
     # clean + deduplicate
     cleaned_candidates = []
@@ -683,7 +689,7 @@ def discover_scan_symbols(
         if not isinstance(quote, str) or not quote:
             continue
 
-        symbol_clean = f"{base}{quote}"
+        symbol_clean = symbol   # keep CCXT format
         scored.append((symbol_clean, vol))
 
     scored.sort(key=lambda x: x[1], reverse=True)
