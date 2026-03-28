@@ -28,26 +28,41 @@ def _default_config() -> dict[str, Any]:
         "leverage": 3,
         "auto_leverage": True,
         "risk_per_trade_pct": 1.0,
-        "max_daily_trades": 2,
-        "min_confidence_pct": 75.0,
-        "min_rr_ratio": 1.2,
-        "cooldown_minutes": 30,
-        "symbol_cooldown_minutes": 45,
+
+        # Hunter v2 risk profile
+        "max_daily_trades": 5,
+        "min_confidence_pct": 52.0,
+        "min_rr_ratio": 1.1,
+        "cooldown_minutes": 5,
+        "symbol_cooldown_minutes": 20,
         "allowed_sides": ["BUY", "SELL"],
-        "max_daily_loss_pct": 3.0,
-        "max_open_positions": 1,
-        "max_consecutive_losses": 2,
-        "max_stop_loss_pct": 3.0,
-        "max_sl_pct": 3.0,
+        "max_daily_loss_pct": 5.0,
+        "max_open_positions": 2,
+        "max_consecutive_losses": 3,
+        "max_stop_loss_pct": 4.0,
+        "max_sl_pct": 4.0,
+
+        # Hunter mode
         "hunter_enabled": False,
-        "scan_symbols": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "SUIUSDT"],
-        "scan_limit": 5,
+
+        # Scanner settings
+        "scan_symbols": [
+            "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT",
+            "SUIUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT",
+            "DOTUSDT", "TRXUSDT", "LTCUSDT", "BCHUSDT", "APTUSDT",
+        ],
+        "scan_limit": 8,
         "scan_cache_ttl_seconds": 45,
         "auto_scan_enabled": True,
         "auto_scan_limit": 20,
         "auto_scan_quote_asset": "USDT",
         "auto_scan_min_quote_volume": 10000000.0,
         "fallback_symbol": "BTCUSDT",
+
+        # Hunter v2 scanner thresholds
+        "scanner_min_confidence_pct": 45.0,
+        "scanner_min_rr_ratio": 0.8,
+        "min_hunter_score": 58.0,
     }
 
 
