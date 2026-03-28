@@ -252,6 +252,63 @@ def _build_trigger_params(exchange_name: str, kind: str, trigger_price: float, c
     return order_type, params
 
 
+
+
+def _is_truthy_reduce_only(order: dict) -> bool:
+    info = order.get("info") or {}
+    candidates = [
+        order.get("reduceOnly"),
+        order.get("reduce_only"),
+        order.get("reduceOnly"),
+        info.get("reduceOnly"),
+        info.get("reduce_only"),
+        info.get("closePosition"),
+        order.get("closePosition"),
+    ]
+    for value in candidates:
+        if isinstance(value, bool):
+            if value:
+                return True
+        elif isinstance(value, str):
+            if value.strip().lower() in {"true", "1", "yes"}:
+                return True
+    return False
+
+
+def cancel_existing_protective_orders(ex, market_symbol: str) -> dict:
+    cancelled = []
+    warnings = []
+    try:
+        open_orders = ex.fetch_open_orders(symbol=market_symbol) or []
+    except TypeError:
+        open_orders = ex.fetch_open_orders(market_symbol) or []
+    except Exception as e:
+        return {"cancelled": cancelled, "warnings": [f"fetch open orders failed: {e}"]}
+
+    for order in open_orders:
+        try:
+            order_type = str(order.get("type") or "").upper()
+            is_protective_type = order_type in {"STOP_MARKET", "TAKE_PROFIT_MARKET", "STOP", "TAKE_PROFIT"}
+            if not (_is_truthy_reduce_only(order) or is_protective_type):
+                continue
+
+            order_id = order.get("id")
+            if not order_id:
+                warnings.append("skipped protective order with missing id")
+                continue
+
+            ex.cancel_order(order_id, symbol=market_symbol)
+            cancelled.append({
+                "id": order_id,
+                "type": order.get("type"),
+                "side": order.get("side"),
+                "stopPrice": order.get("stopPrice") or (order.get("info") or {}).get("stopPrice"),
+            })
+        except Exception as e:
+            warnings.append(f"cancel protective order failed: {e}")
+
+    return {"cancelled": cancelled, "warnings": warnings}
+
 def place_protective_orders(
     ex,
     exchange_name: str,
@@ -264,6 +321,10 @@ def place_protective_orders(
     close_side = _close_side_for_entry(entry_side)
     placed: dict[str, dict] = {}
     warnings: list[str] = []
+
+    cancel_result = cancel_existing_protective_orders(ex, market_symbol)
+    cancelled_orders = cancel_result.get("cancelled") or []
+    warnings.extend(cancel_result.get("warnings") or [])
 
     for key, price in (("take_profit", take_profit), ("stop_loss", stop_loss)):
         if price is None:
@@ -289,7 +350,7 @@ def place_protective_orders(
         except Exception as e:
             warnings.append(f"{key} order placement failed: {e}")
 
-    return {"orders": placed, "warnings": warnings}
+    return {"orders": placed, "warnings": warnings, "cancelled_orders": cancelled_orders}
 
 
 def place_market_order(
@@ -389,6 +450,7 @@ def place_market_order(
         "available_balance_usdt": available_balance_usdt,
         "order": order,
         "exit_orders": exit_orders.get("orders") or {},
+        "cancelled_exit_orders": exit_orders.get("cancelled_orders") or [],
         "exit_order_warnings": exit_orders.get("warnings") or [],
     }
 
@@ -545,16 +607,7 @@ def discover_scan_symbols(
 
         candidates.append(symbol)
 
-    candidates = [s for s in candidates if isinstance(s, str) and s.strip()]
-
-    if not candidates:
-         return []
-
-    try:
-            tickers = ex.fetch_tickers(candidates)
-    except Exception:
-    # fallback: return no discovered symbols instead of crashing bot loop
-         return []
+    tickers = ex.fetch_tickers(candidates)
     scored = []
 
     # ✅ SECOND LOOP

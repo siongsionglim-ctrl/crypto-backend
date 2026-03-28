@@ -44,20 +44,35 @@ def rank_score(signal: Dict[str, Any]) -> float:
     bounce = _safe_float(signal.get("bounce_probability_pct"))
     volume_ratio = _safe_float(signal.get("volume_ratio"), 1.0)
     dominant_prob = max(breakout, breakdown, bounce)
+    direction_edge = _safe_float(signal.get("direction_edge"))
+    setup_quality = _safe_float(signal.get("setup_quality"))
+    is_choppy = bool(signal.get("is_choppy"))
+    market_regime = str(signal.get("market_regime") or "")
+
     if action == "HOLD":
         return -999.0 + confidence * 0.01
+
     score = 0.0
-    score += confidence * 0.45
-    score += trend * 0.20
-    score += dominant_prob * 0.20
-    score += min(rr, 4.0) * 10.0
-    score += min(volume_ratio, 3.0) * 3.0
-    if action == "BUY" and breakout >= breakdown:
+    score += confidence * 0.28
+    score += trend * 0.18
+    score += dominant_prob * 0.14
+    score += min(rr, 4.0) * 11.0
+    score += min(volume_ratio, 2.0) * 7.0
+    score += min(direction_edge, 30.0) * 0.7
+    score += setup_quality * 0.18
+
+    if market_regime == "trend":
         score += 8.0
-    if action == "SELL" and breakdown >= breakout:
-        score += 8.0
-    if rr < 1.2:
-        score -= 12.0
+    if is_choppy:
+        score -= 30.0
+    if action == "BUY" and breakout >= breakdown + 10:
+        score += 6.0
+    if action == "SELL" and breakdown >= breakout + 10:
+        score += 6.0
+    if rr < 1.25:
+        score -= 14.0
+    if trend < 60:
+        score -= 10.0
     return round(score, 4)
 
 
@@ -105,8 +120,16 @@ def scan_symbols(
 
             confidence = _safe_float(signal.get("confidence_pct"))
             rr = _safe_float(signal.get("rr_ratio"))
+            trend = _safe_float(signal.get("trend_strength_pct"))
             action = str(signal.get("action", "HOLD")).upper()
-            qualifies = action in ("BUY", "SELL") and confidence >= min_confidence_pct and rr >= min_rr_ratio
+            qualifies = (
+                action in ("BUY", "SELL")
+                and confidence >= min_confidence_pct
+                and rr >= min_rr_ratio
+                and trend >= 60.0
+                and not bool(signal.get("is_choppy"))
+                and bool(signal.get("should_execute_now"))
+            )
             scored = {**signal, "qualifies": qualifies, "scan_score": rank_score(signal)}
             results.append(scored)
         except Exception as e:
@@ -126,4 +149,5 @@ def scan_symbols(
         "top": qualified[:limit],
         "all": results[:limit],
         "errors": errors[:10],
+        "strategy_version": "v2",
     }
