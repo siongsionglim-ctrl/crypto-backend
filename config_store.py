@@ -49,7 +49,7 @@ def _default_config() -> dict[str, Any]:
         "scan_symbols": [
             "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT",
             "SUIUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT",
-            "DOTUSDT", "TRXUSDT", "LTCUSDT", "BCHUSDT", "APTUSDT",
+            "DOTUSDT", "TRXUSDT", "LTCUSDT", "BCHUSDT", "APTUSDT"
         ],
         "scan_limit": 8,
         "scan_cache_ttl_seconds": 45,

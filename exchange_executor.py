@@ -257,28 +257,41 @@ def _close_side_for_entry(side: str) -> str:
 def _build_trigger_params(exchange_name: str, kind: str, trigger_price: float, close_side: str) -> tuple[str, dict]:
     name = exchange_name.lower()
     trigger_price = float(trigger_price)
+
     if kind == "tp":
         order_type = "TAKE_PROFIT_MARKET"
     else:
         order_type = "STOP_MARKET"
 
+    if name == "binance":
+        params = {
+            "stopPrice": trigger_price,
+            "reduceOnly": True,
+            "workingType": "MARK_PRICE",
+            "priceProtect": True,
+        }
+        return order_type, params
+
+    if name == "bybit":
+        params = {
+            "triggerPrice": trigger_price,
+            "reduceOnly": True,
+            "triggerBy": "MarkPrice",
+        }
+        return order_type, params
+
+    if name == "okx":
+        params = {
+            "stopPrice": trigger_price,
+            "reduceOnly": True,
+            "tdMode": "cross",
+        }
+        return order_type, params
+
     params = {
         "stopPrice": trigger_price,
-        "triggerPrice": trigger_price,
         "reduceOnly": True,
-        "workingType": "MARK_PRICE",
-        "timeInForce": "GTC",
     }
-
-    if name == "binance":
-        params["priceProtect"] = True
-    elif name == "bybit":
-        params["triggerBy"] = "MarkPrice"
-    elif name == "okx":
-        params["reduceOnly"] = True
-        params["tdMode"] = "cross"
-
-    params["side"] = close_side
     return order_type, params
 
 
@@ -359,10 +372,28 @@ def place_protective_orders(
     for key, price in (("take_profit", take_profit), ("stop_loss", stop_loss)):
         if price is None:
             continue
+
         kind = "tp" if key == "take_profit" else "sl"
+
         try:
             rounded_price = _round_price(ex, market_symbol, float(price))
-            order_type, params = _build_trigger_params(exchange_name, kind, rounded_price, close_side)
+
+            order_type, params = _build_trigger_params(
+                exchange_name,
+                kind,
+                rounded_price,
+                close_side,
+            )
+
+            # force safer futures exit behavior
+            params = dict(params or {})
+            params["reduceOnly"] = True
+
+            # Binance futures usually works better with mark price trigger
+            if exchange_name.lower() == "binance":
+                params.setdefault("workingType", "MARK_PRICE")
+                params.setdefault("priceProtect", True)
+
             order = ex.create_order(
                 symbol=market_symbol,
                 type=order_type,
@@ -371,16 +402,23 @@ def place_protective_orders(
                 price=None,
                 params=params,
             )
+
             placed[key] = {
                 "order": order,
                 "trigger_price": rounded_price,
                 "close_side": close_side,
                 "type": order_type,
+                "params": params,
             }
-        except Exception as e:
-            warnings.append(f"{key} order placement failed: {e}")
 
-    return {"orders": placed, "warnings": warnings, "cancelled_orders": cancelled_orders}
+        except Exception as e:
+            warnings.append(f"{key} order placement failed: {type(e).__name__}: {e}")
+
+    return {
+        "orders": placed,
+        "warnings": warnings,
+        "cancelled_orders": cancelled_orders,
+    }
 
 
 def place_market_order(

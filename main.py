@@ -134,7 +134,7 @@ def _sync_open_positions_with_exchange(config: dict, force: bool = False) -> dic
             return previous_state
 
     try:
-        symbols = config.get("scan_symbols") or [config.get("symbol")]
+        #symbols = config.get("scan_symbols") or [config.get("symbol")]
         live_positions = fetch_live_positions(
             exchange_name=config.get("exchange", "binance"),
             api_key=config.get("api_key", ""),
@@ -142,7 +142,7 @@ def _sync_open_positions_with_exchange(config: dict, force: bool = False) -> dic
             passphrase=config.get("passphrase"),
             testnet=bool(config.get("testnet", True)),
             market_type=config.get("market_type", "future"),
-            symbols=symbols,
+            symbols=None,
         )
 
         closed_symbols = sorted(set(previous_positions.keys()) - set(live_positions.keys()))
@@ -155,6 +155,7 @@ def _sync_open_positions_with_exchange(config: dict, force: bool = False) -> dic
         _log(f"position sync complete count={len(live_positions)}")
         return state
     except Exception as e:
+        _log(f"position sync failed: {type(e).__name__}: {e}")
         return set_open_positions(previous_state.get("open_positions") or {}, sync_error=str(e))
 
 
