@@ -69,13 +69,20 @@ def _default_config() -> dict[str, Any]:
         "range_risk_multiplier": 0.7,
         "range_min_hunter_score": 48.0,
 
-        # Hunter V3 config
+        "hunter_version": "v4_futures",
+        "hunter_mode": "balanced",          # conservative / balanced / aggressive / sniper
         "hunter_strong_threshold": 60.0,
-        "hunter_medium_threshold": 45.0,
-        "hunter_mode_preset": "balanced",
-        "hunter_min_volume_ratio": 1.1,
-        "hunter_min_rr": 1.4,
-    }
+        "hunter_medium_threshold": 48.0,
+        "hunter_min_rr": 1.3,
+        "hunter_min_volume_ratio": 1.0,
+        "hunter_htf_timeframe": "1h",
+        "hunter_enable_htf_confirm": True,
+        "hunter_enable_regime_filter": True,
+        "hunter_wait_pullback_enabled": True,
+        "hunter_overextension_penalty": 15.0,
+        "hunter_momentum_trigger_pct": 65.0,
+        "hunter_momentum_volume_ratio": 1.1,
+            }
 
 
 def save_config(data: dict) -> dict:

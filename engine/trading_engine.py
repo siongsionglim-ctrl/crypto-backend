@@ -88,72 +88,95 @@ def decide_action_from_idea(idea):
 
     regime = _calc_market_regime(idea)
 
-    if confidence < 70:
-        return "HOLD", f"V2 filter: low confidence ({confidence:.1f}%)"
-    if rr < 1.2:
-        return "HOLD", f"V2 filter: weak RR ({rr:.2f})"
+    if confidence < 50:
+        return "HOLD", f"V4 filter: very low confidence ({confidence:.1f}%)"
+
+    if rr < 0.9:
+        return "HOLD", f"V4 filter: very weak RR ({rr:.2f})"
+
     if price <= 0 or entry <= 0 or sl <= 0 or tp <= 0:
-        return "HOLD", "V2 filter: invalid levels"
+        return "HOLD", "V4 filter: invalid levels"
+
     if regime["is_choppy"]:
         return "HOLD", (
-            f"V2 no-trade zone: choppy market (score {regime['choppy_score']}/5, "
-            f"edge {regime['direction_edge']:.1f})"
+            f"V4 choppy caution: market messy "
+            f"(score {regime['choppy_score']}/5, edge {regime['direction_edge']:.1f})"
         )
 
     extension_pct = abs(price - entry) / price * 100.0 if price else 0.0
-    if extension_pct > 2.2:
-        return "HOLD", f"V2 filter: price too extended from entry ({extension_pct:.2f}%)"
+    if extension_pct > 2.5:
+        return "HOLD", f"V4 filter: price too extended from entry ({extension_pct:.2f}%)"
 
     stop_distance_pct = abs(price - sl) / price * 100.0 if price else 0.0
-    if stop_distance_pct < 0.25:
-        return "HOLD", f"V2 filter: stop too tight ({stop_distance_pct:.2f}%)"
-    if stop_distance_pct > 2.8:
-        return "HOLD", f"V2 filter: stop too wide ({stop_distance_pct:.2f}%)"
+    if stop_distance_pct < 0.20:
+        return "HOLD", f"V4 filter: stop too tight ({stop_distance_pct:.2f}%)"
+    if stop_distance_pct > 3.2:
+        return "HOLD", f"V4 filter: stop too wide ({stop_distance_pct:.2f}%)"
 
     breakout_edge = breakout - breakdown
     breakdown_edge = breakdown - breakout
     support_distance_pct = abs(price - support) / price * 100.0 if price and support > 0 else 999.0
     resistance_distance_pct = abs(resistance - price) / price * 100.0 if price and resistance > 0 else 999.0
 
+    # momentum override for futures
+    bullish_momentum = breakout >= 68 and volume_ratio >= 1.08
+    bearish_momentum = breakdown >= 68 and volume_ratio >= 1.08
+
     if "bullish" in bias:
-        if not (52 <= rsi <= 68):
-            return "HOLD", f"V2 bullish filter: RSI not supportive ({rsi:.1f})"
-        if breakout >= 60 and breakout_edge >= 12 and trend >= 60 and rr >= 1.3 and volume_ratio >= 1.05:
+        if not (50 <= rsi <= 70):
+            return "HOLD", f"V4 bullish filter: RSI not supportive ({rsi:.1f})"
+
+        if bullish_momentum and trend >= 55 and rr >= 1.1:
             return "BUY", (
-                f"V2 breakout long: breakout {breakout:.1f}%, edge {breakout_edge:.1f}, "
+                f"V4 momentum long: breakout {breakout:.1f}%, edge {breakout_edge:.1f}, "
                 f"trend {trend:.1f}%, RR {rr:.2f}, vol {volume_ratio:.2f}x"
             )
-        if bounce >= 58 and breakout_edge >= 5 and trend >= 62 and rr >= 1.35 and support_distance_pct <= 1.1:
+
+        if breakout >= 56 and breakout_edge >= 8 and trend >= 55 and rr >= 1.15 and volume_ratio >= 1.0:
             return "BUY", (
-                f"V2 pullback long: bounce {bounce:.1f}%, trend {trend:.1f}%, "
+                f"V4 breakout long: breakout {breakout:.1f}%, edge {breakout_edge:.1f}, "
+                f"trend {trend:.1f}%, RR {rr:.2f}, vol {volume_ratio:.2f}x"
+            )
+
+        if bounce >= 54 and breakout_edge >= 3 and trend >= 52 and rr >= 1.15 and support_distance_pct <= 1.3:
+            return "BUY", (
+                f"V4 pullback long: bounce {bounce:.1f}%, trend {trend:.1f}%, "
                 f"support distance {support_distance_pct:.2f}%"
             )
+
         return "HOLD", (
-            f"V2 bullish filter: no clean trigger (breakout {breakout:.1f}, edge {breakout_edge:.1f}, "
+            f"V4 bullish filter: no clean trigger (breakout {breakout:.1f}, edge {breakout_edge:.1f}, "
             f"trend {trend:.1f}, vol {volume_ratio:.2f})"
         )
 
     if "bearish" in bias:
-        if not (32 <= rsi <= 48):
-            return "HOLD", f"V2 bearish filter: RSI not supportive ({rsi:.1f})"
-        if breakdown >= 60 and breakdown_edge >= 12 and trend >= 60 and rr >= 1.3 and volume_ratio >= 1.05:
+        if not (30 <= rsi <= 50):
+            return "HOLD", f"V4 bearish filter: RSI not supportive ({rsi:.1f})"
+
+        if bearish_momentum and trend >= 55 and rr >= 1.1:
             return "SELL", (
-                f"V2 breakdown short: breakdown {breakdown:.1f}%, edge {breakdown_edge:.1f}, "
+                f"V4 momentum short: breakdown {breakdown:.1f}%, edge {breakdown_edge:.1f}, "
                 f"trend {trend:.1f}%, RR {rr:.2f}, vol {volume_ratio:.2f}x"
             )
-        if bounce <= 42 and breakdown_edge >= 5 and trend >= 62 and rr >= 1.35 and resistance_distance_pct <= 1.1:
+
+        if breakdown >= 56 and breakdown_edge >= 8 and trend >= 55 and rr >= 1.15 and volume_ratio >= 1.0:
             return "SELL", (
-                f"V2 pullback short: bounce {bounce:.1f}%, trend {trend:.1f}%, "
+                f"V4 breakdown short: breakdown {breakdown:.1f}%, edge {breakdown_edge:.1f}, "
+                f"trend {trend:.1f}%, RR {rr:.2f}, vol {volume_ratio:.2f}x"
+            )
+
+        if bounce <= 46 and breakdown_edge >= 3 and trend >= 52 and rr >= 1.15 and resistance_distance_pct <= 1.3:
+            return "SELL", (
+                f"V4 pullback short: bounce {bounce:.1f}%, trend {trend:.1f}, "
                 f"resistance distance {resistance_distance_pct:.2f}%"
             )
+
         return "HOLD", (
-            f"V2 bearish filter: no clean trigger (breakdown {breakdown:.1f}, edge {breakdown_edge:.1f}, "
+            f"V4 bearish filter: no clean trigger (breakdown {breakdown:.1f}, edge {breakdown_edge:.1f}, "
             f"trend {trend:.1f}, vol {volume_ratio:.2f})"
         )
 
-    return "HOLD", "V2 no-trade zone: neutral bias"
-
-
+    return "HOLD", "V4 no-trade zone: neutral bias"
 
 def generate_signal(
     symbol: str,
@@ -237,6 +260,6 @@ def generate_signal(
         "market_regime": regime["regime"],
         "range_width_pct": regime["range_width_pct"],
         "setup_quality": regime["setup_quality"],
-        "strategy_version": "v2",
+        "strategy_version": "v4_futures",
         "data_source": "websocket" if exchange == "binance" and websocket_enabled else "rest",
     }

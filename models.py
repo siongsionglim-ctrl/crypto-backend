@@ -96,6 +96,16 @@ class BotConfigRequest(BaseModel):
     hunter_min_volume_ratio: float = 1.1
     hunter_min_rr: float = 1.4
 
+    hunter_version: str = "v4_futures"
+    hunter_mode: str = "balanced"
+    hunter_htf_timeframe: str = "1h"
+    hunter_enable_htf_confirm: bool = True
+    hunter_enable_regime_filter: bool = True
+    hunter_wait_pullback_enabled: bool = True
+    hunter_overextension_penalty: float = 15.0
+    hunter_momentum_trigger_pct: float = 65.0
+    hunter_momentum_volume_ratio: float = 1.1
+
 
 class ScanRequest(BaseModel):
     symbols: list[str] | None = None

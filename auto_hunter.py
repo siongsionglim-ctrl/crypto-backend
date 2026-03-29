@@ -3,6 +3,7 @@ from __future__ import annotations
 from engine.scanner_engine import scan_symbols
 from exchange_executor import place_market_order
 from risk_manager import evaluate_risk, record_trade, register_open_position
+from engine.trading_engine import generate_signal
 
 
 def normalize_side(action: str | None):
@@ -49,228 +50,151 @@ def _norm(v: float, lo: float, hi: float) -> float:
     return _clamp((v - lo) / (hi - lo), 0.0, 1.0)
 
 
-def _score_signal(signal: dict, config: dict | None = None) -> tuple[float, list[str], dict]:
-    """
-    Hunter V3 intelligent scoring.
-    Returns:
-      score, reasons, breakdown
-    """
-
+def _score_signal(signal: dict, config: dict | None = None, htf_signal: dict | None = None) -> tuple[float, list[str], dict]:
     config = config or {}
     reasons: list[str] = []
     breakdown: dict[str, float] = {}
-
-    action = _safe_upper(signal.get("action"))
-    trend = _safe_upper(signal.get("trend"))
-    market_regime = str(signal.get("market_regime") or "").lower().strip()
-    setup_type = str(signal.get("setup_type") or "").lower().strip()
+    action = str(signal.get("action") or "HOLD").upper().strip()
+    regime = _classify_regime(signal)
 
     confidence = _safe_float(signal.get("confidence_pct"), 0.0)
     rr = _safe_float(signal.get("rr_ratio"), 0.0)
     trend_strength = _safe_float(signal.get("trend_strength_pct"), 0.0)
-    breakout = _safe_float(signal.get("breakout_probability_pct"), 0.0)
-    breakdown_prob = _safe_float(signal.get("breakdown_probability_pct"), 0.0)
-    bounce = _safe_float(signal.get("bounce_probability_pct"), 0.0)
-
     volume_ratio = _safe_float(signal.get("volume_ratio"), 1.0)
-    direction_edge = _safe_float(signal.get("direction_edge"), 0.0)
     setup_quality = _safe_float(signal.get("setup_quality"), 0.0)
-    should_execute_now = bool(signal.get("should_execute_now"))
-    is_choppy = bool(signal.get("is_choppy"))
-    range_mode = bool(signal.get("range_mode"))
-
-    price = _safe_float(signal.get("price"), 0.0)
-    entry = _safe_float(signal.get("entry") or signal.get("price"), 0.0)
-    sl = _safe_float(signal.get("sl") or signal.get("stop_loss"), 0.0)
-    stop_distance_pct = _safe_float(signal.get("stop_distance_pct"), 0.0)
-
-    strong_threshold = _safe_float(config.get("hunter_strong_threshold"), 72.0)
-    medium_threshold = _safe_float(config.get("hunter_medium_threshold"), 60.0)
-    min_rr = _safe_float(config.get("hunter_min_rr"), 1.4)
-    min_volume_ratio = _safe_float(config.get("hunter_min_volume_ratio"), 1.05)
+    direction_edge = _safe_float(signal.get("direction_edge"), 0.0)
+    breakout = _safe_float(signal.get("breakout_probability_pct"), 0.0)
+    breakdown = _safe_float(signal.get("breakdown_probability_pct"), 0.0)
+    bounce = _safe_float(signal.get("bounce_probability_pct"), 0.0)
 
     total = 0.0
 
-    # 1) Base signal quality (0-22)
-    base_score = (
+    # Base quality
+    base_quality = (
         _norm(confidence, 45.0, 90.0) * 8.0
-        + _norm(trend_strength, 40.0, 80.0) * 6.0
-        + _norm(setup_quality, 35.0, 85.0) * 8.0
+        + _norm(trend_strength, 35.0, 80.0) * 5.0
+        + _norm(setup_quality, 30.0, 85.0) * 5.0
+        + _norm(direction_edge, 3.0, 20.0) * 4.0
     )
-    total += base_score
-    breakdown["base_quality"] = round(base_score, 2)
-    reasons.append(f"base_quality={base_score:.1f}")
+    total += base_quality
+    breakdown["base_quality"] = round(base_quality, 2)
+    reasons.append(f"base={base_quality:.1f}")
 
-    # 2) Directional edge (0-18)
-    directional_score = 0.0
-    if action == "BUY":
-        directional_score += _norm(max(breakout, bounce), 50.0, 80.0) * 10.0
-        directional_score += _norm(direction_edge, 4.0, 20.0) * 4.0
-        if trend in ("BULLISH", "UPTREND", "BULLISH BIAS"):
-            directional_score += 4.0
-            reasons.append("trend_align=buy")
-    elif action == "SELL":
-        directional_score += _norm(breakdown_prob, 50.0, 80.0) * 10.0
-        directional_score += _norm(direction_edge, 4.0, 20.0) * 4.0
-        if trend in ("BEARISH", "DOWNTREND", "BEARISH BIAS"):
-            directional_score += 4.0
-            reasons.append("trend_align=sell")
-    else:
-        directional_score -= 12.0
-        reasons.append("penalty=hold_action")
+    # RR quality
+    rr_quality = _norm(rr, 1.0, 2.5) * 12.0
+    total += rr_quality
+    breakdown["rr_quality"] = round(rr_quality, 2)
 
-    total += directional_score
-    breakdown["directional_edge"] = round(directional_score, 2)
+    # Volume quality
+    volume_quality = _norm(volume_ratio, 0.95, 1.8) * 10.0
+    total += volume_quality
+    breakdown["volume_quality"] = round(volume_quality, 2)
 
-    # 3) RR and stop quality (0-16)
-    rr_stop_score = 0.0
-    rr_stop_score += _norm(rr, max(0.8, min_rr - 0.3), 2.4) * 10.0
-
-    if 0.25 <= stop_distance_pct <= 2.8:
-        rr_stop_score += 6.0
-    elif 0.15 <= stop_distance_pct <= 3.5:
-        rr_stop_score += 2.0
-    else:
-        rr_stop_score -= 6.0
-        reasons.append(f"penalty=bad_stop_distance_{stop_distance_pct:.2f}%")
-
-    total += rr_stop_score
-    breakdown["rr_stop_quality"] = round(rr_stop_score, 2)
-
-    # 4) Volume + participation (0-12)
-    volume_score = 0.0
-    volume_score += _norm(volume_ratio, 0.95, 1.8) * 8.0
-
-    breakout_like = (action == "BUY" and breakout >= 58) or (action == "SELL" and breakdown_prob >= 58)
-    if breakout_like:
-        if volume_ratio >= min_volume_ratio:
-            volume_score += 4.0
-            reasons.append("volume_confirms_break")
+    # Regime fit
+    regime_fit = 0.0
+    if regime == "trend":
+        if action == "BUY":
+            regime_fit += _norm(breakout, 50.0, 80.0) * 8.0
+        elif action == "SELL":
+            regime_fit += _norm(breakdown, 50.0, 80.0) * 8.0
         else:
-            volume_score -= 5.0
-            reasons.append("penalty=weak_break_volume")
-
-    total += volume_score
-    breakdown["volume_quality"] = round(volume_score, 2)
-
-    # 5) Regime + execution timing (0-14)
-    regime_exec_score = 0.0
-
-    if is_choppy or market_regime == "choppy":
-        regime_exec_score -= 12.0
-        reasons.append("penalty=choppy_market")
-    elif market_regime == "trend":
-        regime_exec_score += 6.0
-        reasons.append("bonus=trend_regime")
-    elif market_regime in ("range", "sideways", "neutral"):
-        if range_mode:
-            regime_exec_score += 3.0
-            reasons.append("bonus=range_fit")
-        else:
-            regime_exec_score -= 4.0
-            reasons.append("penalty=non_range_in_range_market")
-
-    if should_execute_now:
-        regime_exec_score += 8.0
-        reasons.append("execute_now=yes")
+            regime_fit -= 8.0
+    elif regime == "range":
+        regime_fit += _norm(bounce, 40.0, 75.0) * 8.0
+        if action == "HOLD":
+            regime_fit -= 4.0
     else:
-        regime_exec_score -= 3.0
-        reasons.append("execute_now=no")
+        regime_fit -= 12.0
+        reasons.append("penalty=choppy_regime")
 
-    total += regime_exec_score
-    breakdown["regime_execution"] = round(regime_exec_score, 2)
+    total += regime_fit
+    breakdown["regime_fit"] = round(regime_fit, 2)
 
-    # 6) Entry efficiency / late entry penalty (-10 to +8)
-    entry_efficiency = 0.0
-    if price > 0 and entry > 0:
-        distance_pct = abs(price - entry) / price * 100.0
-        if distance_pct <= 0.35:
-            entry_efficiency += 8.0
-            reasons.append("entry_timing=excellent")
-        elif distance_pct <= 0.75:
-            entry_efficiency += 4.0
-            reasons.append("entry_timing=good")
-        elif distance_pct <= 1.2:
-            entry_efficiency -= 2.0
-            reasons.append("penalty=slightly_late_entry")
-        else:
-            entry_efficiency -= 8.0
-            reasons.append(f"penalty=late_entry_{distance_pct:.2f}%")
+    # HTF alignment
+    htf_score = 0.0
+    if bool(config.get("hunter_enable_htf_confirm", True)):
+        htf_score = _htf_alignment_score(signal, htf_signal)
+        total += htf_score
+    breakdown["htf_alignment"] = round(htf_score, 2)
+    if htf_score < 0:
+        reasons.append("penalty=htf_misaligned")
+    elif htf_score > 0:
+        reasons.append("bonus=htf_aligned")
 
-    total += entry_efficiency
-    breakdown["entry_efficiency"] = round(entry_efficiency, 2)
+    # Momentum boost
+    momentum = _momentum_boost(signal, config)
+    total += momentum
+    breakdown["momentum_boost"] = round(momentum, 2)
 
-    # 7) Setup-type nuance (-2 to +6)
-    setup_bonus = 0.0
-    if "breakout" in setup_type:
-        setup_bonus += 5.0
-    elif "pullback" in setup_type:
-        setup_bonus += 4.0
-    elif "reversal" in setup_type:
-        setup_bonus += 2.0
+    # Entry efficiency
+    entry_eff = _entry_efficiency_penalty(signal, config)
+    total += entry_eff
+    breakdown["entry_efficiency"] = round(entry_eff, 2)
 
-    if range_mode:
-        setup_bonus += 2.0
-
-    total += setup_bonus
-    breakdown["setup_bonus"] = round(setup_bonus, 2)
-
-    # Final anti-garbage floor checks
-    if confidence < 48:
+    # Hard penalties
+    if action == "HOLD":
+        total -= 12.0
+        reasons.append("penalty=hold")
+    if rr < _safe_float(config.get("hunter_min_rr"), 1.3):
         total -= 8.0
-        reasons.append("penalty=very_low_confidence")
-    if rr < 1.0 and not range_mode:
-        total -= 10.0
-        reasons.append("penalty=rr_below_1")
-    if trend_strength < 35 and not range_mode:
-        total -= 8.0
-        reasons.append("penalty=very_weak_trend")
+        reasons.append("penalty=low_rr")
+    if volume_ratio < _safe_float(config.get("hunter_min_volume_ratio"), 1.0):
+        total -= 5.0
+        reasons.append("penalty=low_volume")
 
     total = _clamp(total, 0.0, 100.0)
     breakdown["total"] = round(total, 2)
-
-    if total >= strong_threshold:
-        reasons.append("quality=STRONG")
-    elif total >= medium_threshold:
-        reasons.append("quality=MEDIUM")
-    else:
-        reasons.append("quality=WEAK")
 
     return round(total, 2), reasons, breakdown
 
 
 def _rank_candidates(scan_result: dict | None, config: dict | None = None) -> list[dict]:
+    config = config or {}
     top = (scan_result or {}).get("top", []) or []
     ranked = []
 
-    strong_threshold = _safe_float((config or {}).get("hunter_strong_threshold"), 72.0)
-    medium_threshold = _safe_float((config or {}).get("hunter_medium_threshold"), 60.0)
+    strong_threshold = _safe_float(config.get("hunter_strong_threshold"), 60.0)
+    medium_threshold = _safe_float(config.get("hunter_medium_threshold"), 48.0)
+    htf_timeframe = str(config.get("hunter_htf_timeframe") or "1h")
 
     for item in top:
         if not isinstance(item, dict):
             continue
 
-        symbol = item.get("symbol")
-        if not symbol or not isinstance(symbol, str):
-            continue
-
         candidate = _range_trade_signal(item) or item
-        score, score_reasons, breakdown = _score_signal(candidate, config=config)
+        symbol = candidate.get("symbol")
+        htf_signal = None
+
+        if symbol and bool(config.get("hunter_enable_htf_confirm", True)):
+            try:
+                htf_signal = generate_signal(
+                    symbol,
+                    exchange=config.get("scan_exchange") or config.get("exchange", "binance"),
+                    timeframe=htf_timeframe,
+                    market_type=config.get("scan_market_type") or config.get("market_type", "future"),
+                    testnet=bool(config.get("testnet", True)),
+                )
+            except Exception:
+                htf_signal = None
+
+        score, score_reasons, breakdown = _score_signal(candidate, config=config, htf_signal=htf_signal)
+        decision = _timing_decision(candidate, score, config)
+        regime = _classify_regime(candidate)
 
         enriched = dict(candidate)
         enriched["hunter_score"] = round(score, 2)
         enriched["hunter_score_reasons"] = score_reasons
         enriched["hunter_score_breakdown"] = breakdown
+        enriched["regime"] = regime
+        enriched["htf_signal"] = htf_signal or {}
+        enriched["v4_decision"] = decision
 
         if score >= strong_threshold:
             enriched["quality"] = "STRONG"
-            enriched["v3_action"] = "AUTO_TRADE"
         elif score >= medium_threshold:
             enriched["quality"] = "MEDIUM"
-            enriched["v3_action"] = "WATCHLIST"
         else:
             enriched["quality"] = "WEAK"
-            enriched["v3_action"] = "SKIP"
 
         ranked.append(enriched)
 
@@ -283,24 +207,26 @@ def _resolve_best_signal(scan_result: dict | None, config: dict) -> tuple[dict |
     if not ranked:
         return None, []
 
-    strong_th = float(config.get("hunter_strong_threshold", 72.0))
-    medium_th = float(config.get("hunter_medium_threshold", 60.0))
-
     best = ranked[0]
-    score = _safe_float(best.get("hunter_score"), 0.0)
+    decision = str(best.get("v4_decision") or "SKIP").upper()
 
-    if score >= strong_th:
-        best["v3_quality"] = "STRONG"
-        best["v3_action"] = "AUTO_TRADE"
+    if decision == "AUTO_TRADE":
+        best["v4_quality"] = best.get("quality", "STRONG")
+        best["v4_action"] = "AUTO_TRADE"
         return best, ranked
 
-    if score >= medium_th:
-        best["v3_quality"] = "MEDIUM"
-        best["v3_action"] = "WATCHLIST"
+    if decision == "WAIT_PULLBACK":
+        best["v4_quality"] = best.get("quality", "MEDIUM")
+        best["v4_action"] = "WAIT_PULLBACK"
         return best, ranked
 
-    best["v3_quality"] = "WEAK"
-    best["v3_action"] = "SKIP"
+    if decision == "WATCHLIST":
+        best["v4_quality"] = best.get("quality", "MEDIUM")
+        best["v4_action"] = "WATCHLIST"
+        return best, ranked
+
+    best["v4_quality"] = best.get("quality", "WEAK")
+    best["v4_action"] = "SKIP"
     return None, ranked
 
 
@@ -308,6 +234,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
     symbols = config.get("scan_symbols") or [
         "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "SUIUSDT",
     ]
+
     print("[HUNTER DEBUG] scan_result keys =", list((scan_result or {}).keys()), flush=True)
     print("[HUNTER DEBUG] top count =", len((scan_result or {}).get("top", []) or []), flush=True)
 
@@ -316,7 +243,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
     final_confidence = float(config.get("min_confidence_pct", 52.0))
     final_rr = float(config.get("min_rr_ratio", 1.1))
 
-    # ✅ STEP 1: Ensure scan_result exists FIRST
+    # STEP 1: ensure scan_result
     if scan_result is None:
         scan_result = scan_symbols(
             symbols=symbols,
@@ -329,13 +256,13 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             testnet=bool(config.get("testnet", True)),
         )
 
-    # ✅ STEP 2: V3 scoring (correct call)
+    # STEP 2: V4 resolve
     best, ranked = _resolve_best_signal(scan_result, config=config)
 
     if not ranked:
         return {
             "ok": True,
-            "mode": "hunter_v3",
+            "mode": "hunter_v4",
             "status": "NO_DATA",
             "reason": "No candidates from scanner",
             "top_candidates": [],
@@ -344,37 +271,62 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
 
     top_candidate = ranked[0]
 
-    # ✅ STEP 3: No strong setup (but still show data!)
+    # STEP 3: no valid trade
     if not best:
         return {
             "ok": True,
-            "mode": "hunter_v3",
+            "mode": "hunter_v4",
             "status": "NO_TRADE",
             "symbol": top_candidate.get("symbol"),
             "score": top_candidate.get("hunter_score"),
             "quality": top_candidate.get("quality"),
             "signal": top_candidate.get("action"),
+            "regime": top_candidate.get("regime"),
+            "decision": top_candidate.get("v4_decision"),
             "reason": "Top candidate below threshold",
             "top_candidates": ranked[:5],
             "scan_result": scan_result,
         }
 
-    # ✅ STEP 4: MEDIUM = watch only
-    if best.get("v3_action") == "WATCHLIST":
+    decision = str(best.get("v4_decision") or "SKIP").upper()
+
+    # STEP 4: WAIT_PULLBACK
+    if decision == "WAIT_PULLBACK":
         return {
             "ok": True,
-            "mode": "hunter_v3",
+            "mode": "hunter_v4",
+            "status": "WAIT_PULLBACK",
+            "symbol": best.get("symbol"),
+            "score": best.get("hunter_score"),
+            "quality": best.get("quality"),
+            "signal": best.get("action"),
+            "regime": best.get("regime"),
+            "decision": decision,
+            "reason": "Waiting for better entry",
+            "top_candidates": ranked[:5],
+            "scan_result": scan_result,
+            "best_signal": best,
+        }
+
+    # STEP 5: WATCHLIST
+    if decision == "WATCHLIST":
+        return {
+            "ok": True,
+            "mode": "hunter_v4",
             "status": "WATCHLIST",
             "symbol": best.get("symbol"),
             "score": best.get("hunter_score"),
             "quality": best.get("quality"),
             "signal": best.get("action"),
-            "reason": "Medium setup, monitoring",
+            "regime": best.get("regime"),
+            "decision": decision,
+            "reason": "Monitoring setup",
             "top_candidates": ranked[:5],
             "scan_result": scan_result,
+            "best_signal": best,
         }
 
-    # ✅ STEP 5: validate trade
+    # STEP 6: validate executable
     symbol = best.get("symbol")
     action = best.get("action")
     side = normalize_side(action)
@@ -382,7 +334,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
     if not symbol or not side:
         return {
             "ok": True,
-            "mode": "hunter_v3",
+            "mode": "hunter_v4",
             "status": "WATCHLIST",
             "symbol": best.get("symbol"),
             "score": best.get("hunter_score"),
@@ -393,7 +345,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "scan_result": scan_result,
         }
 
-    # ✅ STEP 6: risk check
+    # STEP 7: risk check
     risk = evaluate_risk(
         signal=best,
         max_daily_trades=int(config.get("max_daily_trades", 5)),
@@ -410,7 +362,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
     if not risk.allowed:
         return {
             "ok": True,
-            "mode": "hunter_v3",
+            "mode": "hunter_v4",
             "status": "WATCHLIST",
             "symbol": best.get("symbol"),
             "score": best.get("hunter_score"),
@@ -421,11 +373,11 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "scan_result": scan_result,
         }
 
-    # ✅ STEP 7: auto trade OFF
+    # STEP 8: auto trade OFF
     if not config.get("auto_trade", False):
         return {
             "ok": True,
-            "mode": "hunter_v3",
+            "mode": "hunter_v4",
             "status": "WATCHLIST",
             "symbol": best.get("symbol"),
             "score": best.get("hunter_score"),
@@ -436,7 +388,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "scan_result": scan_result,
         }
 
-    # ✅ STEP 8: execute order
+    # STEP 9: EXECUTE
     try:
         order = place_market_order(
             exchange_name=config["exchange"],
@@ -465,12 +417,14 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
 
     return {
         "ok": True,
-        "mode": "hunter_v3",
+        "mode": "hunter_v4",
         "status": "AUTO_TRADE",
         "symbol": best.get("symbol"),
         "score": best.get("hunter_score"),
         "quality": best.get("quality"),
         "signal": best.get("action"),
+        "regime": best.get("regime"),
+        "decision": "AUTO_TRADE",
         "top_candidates": ranked[:5],
         "order": order,
         "reason": "Trade executed",
@@ -547,3 +501,119 @@ def _range_trade_signal(signal: dict) -> dict | None:
         return s
 
     return None
+
+def _classify_regime(signal: dict) -> str:
+    if bool(signal.get("is_choppy")):
+        return "choppy"
+
+    regime = str(signal.get("market_regime") or "").lower().strip()
+    if regime in {"trend", "range"}:
+        return regime
+
+    trend_strength = _safe_float(signal.get("trend_strength_pct"), 0.0)
+    breakout = _safe_float(signal.get("breakout_probability_pct"), 0.0)
+    breakdown = _safe_float(signal.get("breakdown_probability_pct"), 0.0)
+    bounce = _safe_float(signal.get("bounce_probability_pct"), 0.0)
+
+    if trend_strength >= 55 and max(breakout, breakdown) >= 55:
+        return "trend"
+    if bounce >= 45 and trend_strength < 55:
+        return "range"
+    return "choppy"
+
+def _htf_alignment_score(signal: dict, htf_signal: dict | None) -> float:
+    if not isinstance(htf_signal, dict):
+        return 0.0
+
+    action = str(signal.get("action") or "").upper().strip()
+    htf_action = str(htf_signal.get("action") or "").upper().strip()
+    htf_trend = str(htf_signal.get("trend") or htf_signal.get("bias") or "").upper().strip()
+
+    if action == "BUY":
+        if htf_action == "BUY" or "BULLISH" in htf_trend:
+            return 12.0
+        if htf_action == "SELL" or "BEARISH" in htf_trend:
+            return -12.0
+        return 2.0
+
+    if action == "SELL":
+        if htf_action == "SELL" or "BEARISH" in htf_trend:
+            return 12.0
+        if htf_action == "BUY" or "BULLISH" in htf_trend:
+            return -12.0
+        return 2.0
+
+    return -8.0
+
+def _momentum_boost(signal: dict, config: dict) -> float:
+    breakout = _safe_float(signal.get("breakout_probability_pct"), 0.0)
+    breakdown = _safe_float(signal.get("breakdown_probability_pct"), 0.0)
+    volume = _safe_float(signal.get("volume_ratio"), 1.0)
+    action = str(signal.get("action") or "").upper().strip()
+
+    trigger_pct = _safe_float(config.get("hunter_momentum_trigger_pct"), 65.0)
+    min_volume = _safe_float(config.get("hunter_momentum_volume_ratio"), 1.1)
+
+    if action == "BUY" and breakout >= trigger_pct and volume >= min_volume:
+        return 12.0
+    if action == "SELL" and breakdown >= trigger_pct and volume >= min_volume:
+        return 12.0
+    return 0.0
+
+def _entry_efficiency_penalty(signal: dict, config: dict) -> float:
+    price = _safe_float(signal.get("price"), 0.0)
+    entry = _safe_float(signal.get("entry") or signal.get("price"), 0.0)
+    if price <= 0 or entry <= 0:
+        return 0.0
+
+    distance_pct = abs(price - entry) / price * 100.0
+    penalty = _safe_float(config.get("hunter_overextension_penalty"), 15.0)
+
+    if distance_pct > 2.5:
+        return -penalty
+    if distance_pct > 1.2:
+        return -6.0
+    if distance_pct > 0.7:
+        return -2.0
+    return 4.0
+
+def _timing_decision(signal: dict, score: float, config: dict) -> str:
+    action = str(signal.get("action") or "").upper().strip()
+    should_execute_now = bool(signal.get("should_execute_now"))
+    breakout = _safe_float(signal.get("breakout_probability_pct"), 0.0)
+    breakdown = _safe_float(signal.get("breakdown_probability_pct"), 0.0)
+    momentum_trigger = _safe_float(config.get("hunter_momentum_trigger_pct"), 65.0)
+
+    strong_th = _safe_float(config.get("hunter_strong_threshold"), 60.0)
+    medium_th = _safe_float(config.get("hunter_medium_threshold"), 48.0)
+
+    regime = str(signal.get("regime") or signal.get("market_regime") or "").lower().strip()
+
+    price = _safe_float(signal.get("price"), 0.0)
+    entry = _safe_float(signal.get("entry") or signal.get("price"), 0.0)
+    distance_pct = abs(price - entry) / price * 100.0 if price > 0 and entry > 0 else 0.0
+
+    if action not in {"BUY", "SELL"}:
+        return "SKIP"
+
+    if regime == "choppy":
+        return "WATCHLIST" if score >= medium_th else "SKIP"
+
+    if distance_pct > 2.5:
+        return "WAIT_PULLBACK" if score >= medium_th else "SKIP"
+
+    if score >= strong_th and should_execute_now:
+        return "AUTO_TRADE"
+
+    if score >= strong_th:
+        if action == "BUY" and breakout >= momentum_trigger:
+            return "AUTO_TRADE"
+        if action == "SELL" and breakdown >= momentum_trigger:
+            return "AUTO_TRADE"
+        return "WAIT_PULLBACK"
+
+    if score >= medium_th:
+        return "WATCHLIST"
+
+    return "SKIP"
+
