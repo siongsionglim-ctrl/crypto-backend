@@ -169,7 +169,7 @@ def scan_symbols(
             )
             if not candles:
                 errors.append({"symbol": symbol, "reason": "No data"})
-                continue
+                candles = []  # allow fallback
 
             signal = generate_signal(
                 symbol,
@@ -181,7 +181,16 @@ def scan_symbols(
             )
             if signal.get("error"):
                 errors.append({"symbol": symbol, "reason": signal["error"]})
-                continue
+                signal = {
+                    "symbol": symbol,
+                    "action": "HOLD",
+                    "confidence_pct": 0,
+                    "rr_ratio": 0,
+                    "trend_strength_pct": 0,
+                    "volume_ratio": 1,
+                    "should_execute_now": False,
+                    "is_choppy": True,
+                }
 
             confidence = _safe_float(signal.get("confidence_pct"))
             rr = _safe_float(signal.get("rr_ratio"))
