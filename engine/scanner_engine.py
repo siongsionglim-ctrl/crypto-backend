@@ -209,7 +209,13 @@ def scan_symbols(
                 and passes_minimums
                 and trend >= 40.0
             )
-            scan_score, scan_score_reasons = _score_scan_candidate(signal)
+            scan_score = rank_score(signal)
+            scan_score_reasons = [
+                f"action={signal.get('action', 'HOLD')}",
+                f"confidence={_safe_float(signal.get('confidence_pct')):.1f}",
+                f"rr={_safe_float(signal.get('rr_ratio')):.2f}",
+            ]
+            
             if bool(signal.get("is_choppy")):
                 scan_score -= 8.0
                 scan_score_reasons.append("penalty=choppy")
