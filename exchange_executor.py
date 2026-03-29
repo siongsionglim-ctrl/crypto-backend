@@ -10,11 +10,14 @@ def build_exchange(exchange_name, api_key, secret, passphrase=None, testnet=True
     exchange_name = (exchange_name or "binance").lower()
     market_type = (market_type or "future").lower()
 
+    timeout_ms = 30000
+
     if exchange_name == "binance":
         ex = ccxt.binance({
             "apiKey": api_key or "",
             "secret": secret or "",
             "enableRateLimit": True,
+            "timeout": timeout_ms,
             "options": {
                 "defaultType": "swap" if market_type == "future" else "spot",
                 "defaultSubType": "linear" if market_type == "future" else None,
@@ -29,6 +32,7 @@ def build_exchange(exchange_name, api_key, secret, passphrase=None, testnet=True
         if testnet and market_type == "future":
             ex.set_sandbox_mode(True)
 
+        print(f"[BOT DEBUG] exchange={exchange_name} market_type={market_type} options={ex.options}")
         return ex
 
     if exchange_name == "bybit":
@@ -36,24 +40,7 @@ def build_exchange(exchange_name, api_key, secret, passphrase=None, testnet=True
             "apiKey": api_key or "",
             "secret": secret or "",
             "enableRateLimit": True,
-            "options": {
-                "defaultType": "swap" if market_type == "future" else "spot",
-                "defaultSubType": "linear" if market_type == "future" else None,
-                "adjustForTimeDifference": True,
-            },
-        })
-
-        if testnet:
-            ex.set_sandbox_mode(True)
-
-        return ex
-
-    if exchange_name == "okx":
-        ex = ccxt.okx({
-            "apiKey": api_key or "",
-            "secret": secret or "",
-            "password": passphrase or "",
-            "enableRateLimit": True,
+            "timeout": timeout_ms,
             "options": {
                 "defaultType": "swap" if market_type == "future" else "spot",
                 "defaultSubType": "linear" if market_type == "future" else None,
@@ -66,6 +53,27 @@ def build_exchange(exchange_name, api_key, secret, passphrase=None, testnet=True
 
         print(f"[BOT DEBUG] exchange={exchange_name} market_type={market_type} options={ex.options}")
         return ex
+
+    if exchange_name == "okx":
+        ex = ccxt.okx({
+            "apiKey": api_key or "",
+            "secret": secret or "",
+            "password": passphrase or "",
+            "enableRateLimit": True,
+            "timeout": timeout_ms,
+            "options": {
+                "defaultType": "swap" if market_type == "future" else "spot",
+                "defaultSubType": "linear" if market_type == "future" else None,
+                "adjustForTimeDifference": True,
+            },
+        })
+
+        if testnet:
+            ex.set_sandbox_mode(True)
+
+        print(f"[BOT DEBUG] exchange={exchange_name} market_type={market_type} options={ex.options}")
+        return ex
+
     raise ValueError(f"Unsupported exchange: {exchange_name}")
 
 
@@ -82,26 +90,69 @@ def to_market_symbol(exchange_name: str, symbol: str) -> str:
 
 
 def _balance_usdt(ex) -> float:
+    balance = None
+    last_error = None
+
+    # 1) Prefer futures balance first
     try:
-        balance = ex.fetch_balance()
+        balance = ex.fetch_balance({"type": "future"})
+        print("[DEBUG BALANCE] source=future", flush=True)
         print("[DEBUG BALANCE] keys =", list(balance.keys()), flush=True)
         print("[DEBUG BALANCE] free =", balance.get("free"), flush=True)
         print("[DEBUG BALANCE] total =", balance.get("total"), flush=True)
         print("[DEBUG BALANCE] USDT =", balance.get("USDT"), flush=True)
     except Exception as e:
-        if "418" in str(e) or "DDoSProtection" in str(e):
-            print("[DEBUG BALANCE] rate-limited:", str(e), flush=True)
-        else:
-            print("[DEBUG BALANCE] fetch error:", str(e), flush=True)
-        raise
+        last_error = e
+        print("[DEBUG BALANCE] future fetch error:", str(e), flush=True)
 
-    for bucket in ("free", "total"):
-        data = balance.get(bucket)
-        if isinstance(data, dict):
-            value = data.get("USDT")
-            if value is not None:
-                return float(value)
+    # 2) Fallback to swap if needed
+    if balance is None:
+        try:
+            balance = ex.fetch_balance({"type": "swap"})
+            print("[DEBUG BALANCE] source=swap", flush=True)
+            print("[DEBUG BALANCE] keys =", list(balance.keys()), flush=True)
+            print("[DEBUG BALANCE] free =", balance.get("free"), flush=True)
+            print("[DEBUG BALANCE] total =", balance.get("total"), flush=True)
+            print("[DEBUG BALANCE] USDT =", balance.get("USDT"), flush=True)
+        except Exception as e:
+            last_error = e
+            print("[DEBUG BALANCE] swap fetch error:", str(e), flush=True)
 
+    # 3) Final fallback
+    if balance is None:
+        try:
+            balance = ex.fetch_balance()
+            print("[DEBUG BALANCE] source=generic", flush=True)
+            print("[DEBUG BALANCE] keys =", list(balance.keys()), flush=True)
+            print("[DEBUG BALANCE] free =", balance.get("free"), flush=True)
+            print("[DEBUG BALANCE] total =", balance.get("total"), flush=True)
+            print("[DEBUG BALANCE] USDT =", balance.get("USDT"), flush=True)
+        except Exception as e:
+            if "418" in str(e) or "DDoSProtection" in str(e):
+                print("[DEBUG BALANCE] rate-limited:", str(e), flush=True)
+            else:
+                print("[DEBUG BALANCE] fetch error:", str(e), flush=True)
+            raise last_error or e
+
+    # Prefer free USDT
+    free_bucket = balance.get("free")
+    if isinstance(free_bucket, dict):
+        value = free_bucket.get("USDT")
+        if value is not None:
+            return float(value)
+
+    # Then total - used
+    total_bucket = balance.get("total")
+    used_bucket = balance.get("used")
+    if isinstance(total_bucket, dict):
+        total_val = total_bucket.get("USDT")
+        used_val = 0.0
+        if isinstance(used_bucket, dict):
+            used_val = float(used_bucket.get("USDT") or 0.0)
+        if total_val is not None:
+            return max(0.0, float(total_val) - used_val)
+
+    # Then direct USDT object
     usdt = balance.get("USDT")
     if isinstance(usdt, dict):
         return float(usdt.get("free") or usdt.get("total") or 0.0)
@@ -547,40 +598,49 @@ def fetch_live_positions(
     )
 
     ex.load_markets()
+
     normalized_symbols = {str(s).upper() for s in (symbols or []) if s}
-    requested_symbols = [to_market_symbol(exchange_name, s) for s in normalized_symbols]
     normalized = {}
 
     if market_type == "future":
-        positions = []
-        if hasattr(ex, "fetch_positions"):
-            try:
-                positions = ex.fetch_positions(requested_symbols or None) or []
-            except Exception:
-                positions = ex.fetch_positions() or []
-        else:
+        if not hasattr(ex, "fetch_positions"):
             raise ValueError(f"{exchange_name} client does not support fetch_positions for futures sync")
+
+        try:
+            positions = ex.fetch_positions() or []
+        except Exception as e:
+            raise RuntimeError(f"fetch_positions failed: {type(e).__name__}: {e}")
 
         for pos in positions:
             contracts = pos.get("contracts")
             if contracts is None:
                 contracts = pos.get("positionAmt") or pos.get("contracts") or 0
+
             try:
                 contracts = float(contracts or 0)
             except Exception:
                 contracts = 0.0
+
             if abs(contracts) <= 0:
                 continue
 
             raw_symbol = pos.get("symbol") or pos.get("info", {}).get("symbol") or ""
             symbol = _normalize_symbol(exchange_name, raw_symbol)
+
+            # optional filter only if caller explicitly wants it
             if normalized_symbols and symbol not in normalized_symbols:
                 continue
 
-            side = str(pos.get("side") or "").upper()
+            side = str(pos.get("side") or "").upper().strip()
             if not side:
                 side = "BUY" if contracts > 0 else "SELL"
-            entry = pos.get("entryPrice") or pos.get("entry_price") or pos.get("average") or pos.get("markPrice")
+
+            entry = (
+                pos.get("entryPrice")
+                or pos.get("entry_price")
+                or pos.get("average")
+                or pos.get("markPrice")
+            )
             try:
                 entry = float(entry) if entry is not None else None
             except Exception:
@@ -594,10 +654,13 @@ def fetch_live_positions(
                 "entry": entry,
                 "source": "exchange",
                 "market_type": market_type,
+                "raw": pos,
             }
+
     else:
         balance = ex.fetch_balance()
         totals = balance.get("total") if isinstance(balance.get("total"), dict) else balance
+
         for asset, value in (totals or {}).items():
             if asset in {"USDT", "USDC", "USD"}:
                 continue
@@ -607,9 +670,11 @@ def fetch_live_positions(
                 continue
             if qty <= 0:
                 continue
+
             symbol = f"{str(asset).upper()}USDT"
             if normalized_symbols and symbol not in normalized_symbols:
                 continue
+
             normalized[symbol] = {
                 "symbol": symbol,
                 "market_symbol": to_market_symbol(exchange_name, symbol),
