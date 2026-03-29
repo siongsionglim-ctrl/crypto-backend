@@ -526,10 +526,20 @@ def bot_status():
     meta = _load_meta()
     config = load_config()
     state = get_state()
+
     available_balance = state.get("balance_snapshot")
     last_result = meta.get("last_result") or {}
-    signal = last_result.get("signal") or last_result.get("best_signal") or {}
+
+    raw_signal = last_result.get("signal")
+    raw_best_signal = last_result.get("best_signal")
+
+    signal = raw_signal if isinstance(raw_signal, dict) else {}
+    best_signal = raw_best_signal if isinstance(raw_best_signal, dict) else {}
+
+    primary = signal or best_signal
+
     order_wrap = last_result.get("order") if isinstance(last_result.get("order"), dict) else {}
+
     return {
         "ok": True,
         "running": bool(meta.get("running", False)),
@@ -538,9 +548,15 @@ def bot_status():
         "market_type": config.get("market_type", "future"),
         "timeframe": config.get("timeframe", "1h"),
         "scan_timeframe": config.get("scan_timeframe") or config.get("timeframe", "1h"),
-        "symbol": signal.get("symbol") or config.get("symbol"),
-        "action": signal.get("action"),
-        "confidence_pct": signal.get("confidence_pct"),
+
+        # Safe signal fields
+        "symbol": primary.get("symbol") or last_result.get("symbol") or config.get("symbol"),
+        "action": primary.get("action") or last_result.get("signal") or last_result.get("status"),
+        "confidence_pct": primary.get("confidence_pct"),
+        "score": primary.get("hunter_score") or last_result.get("score"),
+        "quality": primary.get("quality") or primary.get("v3_quality") or last_result.get("quality"),
+        "reason": last_result.get("reason"),
+
         "last_result": last_result,
         "last_trade": order_wrap.get("order") or last_result.get("order"),
         "position_size": order_wrap.get("amount"),
@@ -560,6 +576,7 @@ def bot_status():
         "auto_scan_enabled": bool(config.get("auto_scan_enabled", True)),
         "auto_scan_limit": int(config.get("auto_scan_limit", 20)),
         "fallback_symbol": config.get("fallback_symbol", "BTCUSDT"),
+        "top_candidates": last_result.get("top_candidates", []),
         "state": state,
     }
 
