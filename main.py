@@ -262,7 +262,7 @@ def _run_and_cache_scan(*, symbols=None, min_confidence_pct=55.0, min_rr_ratio=1
 def _run_bot_cycle(config: dict) -> dict:
     # Sync positions first
     state = _sync_open_positions_with_exchange(config, force=True)
-    
+
     min_balance = float(config.get("min_available_balance_usdt", 5.0))
     available_balance = _check_available_balance(config)
 
@@ -272,7 +272,7 @@ def _run_bot_cycle(config: dict) -> dict:
     if config.get("hunter_enabled", False):
         ttl = int(config.get("scan_cache_ttl_seconds", 45))
         params = _build_scan_params_from_config(config)
-        
+
         if _scan_cache_fresh(ttl) and _SCAN_CACHE["params"] == params:
             _log("using cached scan result")
             scan_result = _SCAN_CACHE["data"]
@@ -284,20 +284,47 @@ def _run_bot_cycle(config: dict) -> dict:
             return {
                 "ok": True,
                 "mode": "scan_only",
+                "status": "SCAN_ONLY",
                 "available_balance_usdt": available_balance,
                 "min_available_balance_usdt": min_balance,
                 "scan_result": scan_result,
+                "top_candidates": (scan_result or {}).get("top", [])[:5],
                 "open_positions": state.get("open_positions") or {},
                 "reason": f"Available balance below {min_balance:.2f} USDT. Scanning only.",
             }
 
         try:
-            result = run_auto_hunter(config, scan_result=scan_result)
+            hunter_result = run_auto_hunter(config, scan_result=scan_result)
+
+            if not isinstance(hunter_result, dict):
+                hunter_result = {
+                    "ok": False,
+                    "mode": "hunter_error",
+                    "status": "ERROR",
+                    "reason": "Invalid hunter result",
+                }
+
+            # Normalize V3 result shape for Flutter/UI
+            result = {
+                "ok": bool(hunter_result.get("ok", True)),
+                "mode": str(hunter_result.get("mode") or "hunter_v3"),
+                "status": str(hunter_result.get("status") or "NO_TRADE"),
+                "symbol": hunter_result.get("symbol"),
+                "score": hunter_result.get("score"),
+                "quality": hunter_result.get("quality"),
+                "signal": hunter_result.get("signal"),
+                "reason": str(hunter_result.get("reason") or "Hunter cycle completed"),
+                "top_candidates": hunter_result.get("top_candidates", []),
+                "scan_result": scan_result,
+                "open_positions": state.get("open_positions") or {},
+            }
+
         except Exception as e:
             _log(f"hunter error: {e}")
             result = {
                 "ok": False,
                 "mode": "hunter_error",
+                "status": "ERROR",
                 "available_balance_usdt": available_balance,
                 "min_available_balance_usdt": min_balance,
                 "open_positions": state.get("open_positions") or {},
@@ -313,28 +340,33 @@ def _run_bot_cycle(config: dict) -> dict:
             result = {
                 "ok": False,
                 "mode": "trade_error",
+                "status": "ERROR",
                 "available_balance_usdt": available_balance,
                 "min_available_balance_usdt": min_balance,
                 "open_positions": state.get("open_positions") or {},
                 "reason": f"Trade execution error: {str(e)}",
             }
 
-    # Final safety net - ensure result is always a valid dict with string reason
+    # Final safety net
     if not isinstance(result, dict):
         result = {
             "ok": False,
             "mode": "unknown",
-            "reason": "Invalid result from trade/hunter function"
+            "status": "ERROR",
+            "reason": "Invalid result from trade/hunter function",
         }
 
     result.setdefault("available_balance_usdt", available_balance)
     result.setdefault("min_available_balance_usdt", min_balance)
+    result.setdefault("open_positions", state.get("open_positions") or {})
+    result.setdefault("top_candidates", [])
 
     # === ULTRA SAFE LOGGING ===
     mode = str(result.get("mode") or "unknown")
+    status = str(result.get("status") or "UNKNOWN")
     reason = str(result.get("reason") or "no reason provided")
-    
-    _log(f"cycle result → mode={mode} | reason={reason}")
+
+    _log(f"cycle result → mode={mode} status={status} | reason={reason}")
 
     return result
 

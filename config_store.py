@@ -68,6 +68,13 @@ def _default_config() -> dict[str, Any]:
         "range_amount_multiplier": 0.7,
         "range_risk_multiplier": 0.7,
         "range_min_hunter_score": 48.0,
+
+        # Hunter V3 config
+        "hunter_strong_threshold": 72.0,
+        "hunter_medium_threshold": 60.0,
+        "hunter_mode_preset": "balanced",
+        "hunter_min_volume_ratio": 1.1,
+        "hunter_min_rr": 1.4,
     }
 
 

@@ -90,6 +90,12 @@ class BotConfigRequest(BaseModel):
     auto_scan_min_quote_volume: float = 10000000.0
     fallback_symbol: str = "BTCUSDT"
 
+    hunter_strong_threshold: float = 72.0
+    hunter_medium_threshold: float = 60.0
+    hunter_mode_preset: str = "balanced"
+    hunter_min_volume_ratio: float = 1.1
+    hunter_min_rr: float = 1.4
+
 
 class ScanRequest(BaseModel):
     symbols: list[str] | None = None
