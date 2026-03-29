@@ -40,6 +40,9 @@ def _score_signal(signal: dict) -> tuple[float, list[str]]:
     - setup bonus
     - penalties for weak / late / wide-SL setups
     """
+
+    market_regime = str(signal.get("market_regime") or "").lower().strip()
+    range_mode = bool(signal.get("range_mode"))
     reasons = []
 
     confidence = _safe_float(signal.get("confidence_pct"), 0.0)
@@ -104,16 +107,35 @@ def _score_signal(signal: dict) -> tuple[float, list[str]]:
 
     # penalties
     if rr < 1.0:
-        score -= 10.0
-        reasons.append("penalty=low_rr")
+        if range_mode:
+            score -= 4.0
+            reasons.append("penalty=low_rr_range")
+        else:
+            score -= 10.0
+            reasons.append("penalty=low_rr")
 
     if confidence < 50.0:
         score -= 10.0
         reasons.append("penalty=low_confidence")
 
     if trend_strength < 40.0:
-        score -= 8.0
-        reasons.append("penalty=weak_trend")
+        if not range_mode:
+            score -= 8.0
+            reasons.append("penalty=weak_trend")
+
+        # Hunter v3 range bonuses
+    if range_mode:
+        score += 6.0
+        reasons.append("bonus=range_mode")
+
+        if market_regime in ("range", "sideways", "neutral"):
+            score += 6.0
+            reasons.append("bonus=range_regime")
+
+        # range trades accept slightly smaller RR
+        if rr >= 0.9:
+            score += 3.0
+            reasons.append("bonus=acceptable_rr_for_range")
 
     # stop-loss width penalty
     if entry > 0 and sl > 0:
@@ -147,8 +169,9 @@ def _rank_candidates(scan_result: dict | None) -> list[dict]:
         if not symbol or not isinstance(symbol, str):
             continue
 
-        score, score_reasons = _score_signal(item)
-        enriched = dict(item)
+        candidate = _range_trade_signal(item) or item
+        score, score_reasons = _score_signal(candidate)
+        enriched = dict(candidate)
         enriched["hunter_score"] = round(score, 2)
         enriched["hunter_score_reasons"] = score_reasons
         ranked.append(enriched)
@@ -157,13 +180,14 @@ def _rank_candidates(scan_result: dict | None) -> list[dict]:
     return ranked
 
 
-def _resolve_best_signal(scan_result: dict | None, min_hunter_score: float) -> tuple[dict | None, list[dict]]:
+def _resolve_best_signal(scan_result: dict | None, min_hunter_score: float, range_min_hunter_score: float = 48.0) -> tuple[dict | None, list[dict]]:
     ranked = _rank_candidates(scan_result)
     if not ranked:
         return None, []
 
     best = ranked[0]
-    if _safe_float(best.get("hunter_score"), 0.0) < min_hunter_score:
+    threshold = range_min_hunter_score if best.get("range_mode") else min_hunter_score
+    if _safe_float(best.get("hunter_score"), 0.0) < threshold:
         return None, ranked
 
     return best, ranked
@@ -180,6 +204,11 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
     final_confidence = float(config.get("min_confidence_pct", 52.0))
     final_rr = float(config.get("min_rr_ratio", 1.1))
     min_hunter_score = float(config.get("min_hunter_score", 58.0))
+    best, ranked = _resolve_best_signal(
+        scan_result,
+        min_hunter_score=min_hunter_score,
+        range_min_hunter_score=float(config.get("range_min_hunter_score", 48.0)),
+    )
 
     if scan_result is None:
         scan_result = scan_symbols(
@@ -276,6 +305,13 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
     stop_loss = best.get("sl") or best.get("stop_loss")
     take_profit = best.get("tp") or best.get("take_profit")
 
+    amount = float(config.get("amount", 0.001))
+    risk_per_trade_pct = float(config.get("risk_per_trade_pct", 1.0))
+
+    if best.get("range_mode"):
+        amount *= float(config.get("range_amount_multiplier", 0.7))
+        risk_per_trade_pct *= float(config.get("range_risk_multiplier", 0.7))
+
     try:
         order = place_market_order(
             exchange_name=config["exchange"],
@@ -284,12 +320,12 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             passphrase=config.get("passphrase"),
             symbol=symbol,
             side=side,
-            amount=float(config.get("amount", 0.001)),
+            amount=amount,
             testnet=bool(config.get("testnet", True)),
             market_type=config.get("market_type", "future"),
             leverage=int(config.get("leverage", 3)),
             auto_leverage=bool(config.get("auto_leverage", True)),
-            risk_per_trade_pct=float(config.get("risk_per_trade_pct", 1.0)),
+            risk_per_trade_pct=risk_per_trade_pct,
             entry_price=entry_price,
             stop_loss=stop_loss,
             take_profit=take_profit,
@@ -333,3 +369,75 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         "order": order,
         "reason": "Hunter v2 trade executed successfully with TP/SL",
     }
+
+def _safe_bool(value) -> bool:
+    return bool(value)
+
+
+def _range_trade_signal(signal: dict) -> dict | None:
+    """
+    Hunter v3 range-fade logic.
+    Returns a modified signal dict when a range setup is detected,
+    otherwise returns None.
+    """
+    market_regime = str(signal.get("market_regime") or "").lower().strip()
+    trend = _safe_upper(signal.get("trend"))
+    action = _safe_upper(signal.get("action"))
+
+    price = _safe_float(signal.get("price"), 0.0)
+    entry = _safe_float(signal.get("entry") or signal.get("price"), 0.0)
+    sl = _safe_float(signal.get("sl") or signal.get("stop_loss"), 0.0)
+
+    breakout = _safe_float(signal.get("breakout_probability_pct"), 0.0)
+    breakdown = _safe_float(signal.get("breakdown_probability_pct"), 0.0)
+    bounce = _safe_float(signal.get("bounce_probability_pct"), 0.0)
+    confidence = _safe_float(signal.get("confidence_pct"), 0.0)
+    trend_strength = _safe_float(signal.get("trend_strength_pct"), 0.0)
+    rr = _safe_float(signal.get("rr_ratio"), 0.0)
+
+    is_choppy = _safe_bool(signal.get("is_choppy"))
+    should_execute_now = _safe_bool(signal.get("should_execute_now"))
+
+    # Need range/neutral environment
+    is_range = market_regime in ("range", "sideways", "neutral")
+
+    if not is_range:
+        return None
+
+    # Avoid fading a strong trend
+    if trend in ("BULLISH", "UPTREND", "BEARISH", "DOWNTREND") and trend_strength >= 65:
+        return None
+
+    # Avoid random noisy mid-range trades
+    if confidence < 40:
+        return None
+
+    # Optional: allow some chop, but not extreme chaos
+    if is_choppy and trend_strength < 25:
+        return None
+
+    # RANGE SHORT:
+    # near range high / resistance, breakout weak, breakdown stronger than breakout
+    if breakout < 35 and breakdown >= breakout + 8 and action in ("HOLD", "SELL"):
+        s = dict(signal)
+        s["action"] = "SELL"
+        s["setup_type"] = "range_short"
+        s["range_mode"] = True
+        s["rr_ratio"] = max(rr, 0.9)
+        s["confidence_pct"] = max(confidence, 48.0)
+        s["should_execute_now"] = True if should_execute_now else s.get("should_execute_now", True)
+        return s
+
+    # RANGE LONG:
+    # near range low / support, breakdown weak, bounce stronger than breakdown
+    if breakdown < 35 and bounce >= breakdown + 8 and action in ("HOLD", "BUY"):
+        s = dict(signal)
+        s["action"] = "BUY"
+        s["setup_type"] = "range_long"
+        s["range_mode"] = True
+        s["rr_ratio"] = max(rr, 0.9)
+        s["confidence_pct"] = max(confidence, 48.0)
+        s["should_execute_now"] = True if should_execute_now else s.get("should_execute_now", True)
+        return s
+
+    return None

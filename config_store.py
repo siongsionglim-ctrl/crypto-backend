@@ -16,14 +16,14 @@ def _default_config() -> dict[str, Any]:
         "api_key": "",
         "secret": "",
         "passphrase": "",
-        "auto_trade": False,
+        "auto_trade": True,
         "amount": 0.001,
         "testnet": True,
         "market_type": "future",
-        "timeframe": "15m",
-        "higher_timeframe": "4h",
+        "timeframe": "5m",
+        "higher_timeframe": "1h",
         "scan_exchange": "binance",
-        "scan_timeframe": "15m",
+        "scan_timeframe": "5m",
         "scan_market_type": "future",
         "leverage": 3,
         "auto_leverage": True,
@@ -31,8 +31,8 @@ def _default_config() -> dict[str, Any]:
 
         # Hunter v2 risk profile
         "max_daily_trades": 5,
-        "min_confidence_pct": 52.0,
-        "min_rr_ratio": 1.1,
+        "min_confidence_pct": 48.0,
+        "min_rr_ratio": 1.0,
         "cooldown_minutes": 5,
         "symbol_cooldown_minutes": 20,
         "allowed_sides": ["BUY", "SELL"],
@@ -43,7 +43,7 @@ def _default_config() -> dict[str, Any]:
         "max_sl_pct": 4.0,
 
         # Hunter mode
-        "hunter_enabled": False,
+        "hunter_enabled": True,
 
         # Scanner settings
         "scan_symbols": [
@@ -60,9 +60,14 @@ def _default_config() -> dict[str, Any]:
         "fallback_symbol": "BTCUSDT",
 
         # Hunter v2 scanner thresholds
-        "scanner_min_confidence_pct": 45.0,
-        "scanner_min_rr_ratio": 0.8,
-        "min_hunter_score": 58.0,
+        "scanner_min_confidence_pct": 40.0,
+        "scanner_min_rr_ratio": 0.7,
+        "min_hunter_score": 50.0,
+
+        "range_trading_enabled": True,
+        "range_amount_multiplier": 0.7,
+        "range_risk_multiplier": 0.7,
+        "range_min_hunter_score": 48.0,
     }
 
 
