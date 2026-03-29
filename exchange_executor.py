@@ -531,15 +531,13 @@ def place_market_order(
             pass
 
     params = {}
-    if market_type == "future" and exchange_name.lower() in {"binance", "bybit", "okx"}:
-        params.update({"reduceOnly": False})
 
     order = ex.create_market_order(
         symbol=market_symbol,
         side=side.lower(),
         amount=final_amount,
         params=params,
-    )
+        )
 
     exit_orders = {"orders": {}, "warnings": []}
     if market_type == "future" and (take_profit is not None or stop_loss is not None):
