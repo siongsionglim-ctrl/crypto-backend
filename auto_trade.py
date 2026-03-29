@@ -124,15 +124,17 @@ def run_auto_trade(config: dict):
             passphrase=config.get("passphrase"),
             symbol=symbol,
             side=side,
-            amount=amount,
+            amount=float(config.get("amount", 0.001)),
             testnet=bool(config.get("testnet", True)),
             market_type=config.get("market_type", "future"),
             leverage=int(config.get("leverage", 3)),
             auto_leverage=bool(config.get("auto_leverage", True)),
-            risk_per_trade_pct=risk_per_trade_pct,
+            risk_per_trade_pct=float(config.get("risk_per_trade_pct", 1.0)),
             entry_price=entry_price,
             stop_loss=stop_loss,
             take_profit=take_profit,
+            max_margin_allocation_pct=float(config.get("max_margin_allocation_pct", 25.0)),
+            safety_buffer_pct=float(config.get("safety_buffer_pct", 10.0)),
         )
     except Exception as e:
         return {

@@ -247,7 +247,19 @@ def _ensure_minimums(ex, exchange_name: str, market_symbol: str, amount: float, 
     return rounded, notional
 
 
-def _compute_dynamic_amount(ex, exchange_name: str, market_symbol: str, entry_price: float | None, stop_loss: float | None, risk_per_trade_pct: float, leverage: int, market_type: str, auto_leverage: bool) -> tuple[float, int, float, float]:
+def _compute_dynamic_amount(
+    ex,
+    exchange_name: str,
+    market_symbol: str,
+    entry_price: float | None,
+    stop_loss: float | None,
+    risk_per_trade_pct: float,
+    leverage: int,
+    market_type: str,
+    auto_leverage: bool,
+    max_margin_allocation_pct: float = 25.0,
+    safety_buffer_pct: float = 10.0,
+) -> tuple[float, int, float, float]:
     balance_usdt = _balance_usdt(ex)
     if balance_usdt <= 0:
         raise ValueError("Unable to determine available USDT balance.")
@@ -259,29 +271,51 @@ def _compute_dynamic_amount(ex, exchange_name: str, market_symbol: str, entry_pr
 
     market = _resolve_market(ex, market_symbol)
     min_notional = _min_notional(exchange_name, market, market_type)
+
     max_leverage = max(1, int(leverage or 1))
     applied_leverage = 1 if market_type == "spot" else max_leverage
 
+    # user risk
     risk_pct = max(0.1, float(risk_per_trade_pct)) / 100.0
     risk_amount_usdt = balance_usdt * risk_pct
+
+    # safety buffer: don't use full wallet
+    safety_buffer = max(0.0, min(50.0, float(safety_buffer_pct))) / 100.0
+    usable_balance = balance_usdt * (1.0 - safety_buffer)
+
+    # cap how much margin can be allocated to one trade
+    max_alloc_pct = max(1.0, min(100.0, float(max_margin_allocation_pct))) / 100.0
+    max_margin_usdt = usable_balance * max_alloc_pct
+
     stop_distance = abs(entry - stop)
 
-    if stop_distance <= 0:
-        raw_amount = (balance_usdt * risk_pct * max(1, applied_leverage)) / entry
-    else:
+    # risk-based raw amount
+    if stop_distance > 0:
         raw_amount = risk_amount_usdt / stop_distance
+    else:
+        # fallback if SL missing/bad
+        raw_amount = (max_margin_usdt * max(1, applied_leverage)) / entry
 
+    # max affordable amount by margin
     if market_type == "future" and entry > 0 and applied_leverage > 0:
-        max_affordable_amount = (balance_usdt * 0.95 * applied_leverage) / entry
+        max_affordable_amount = (max_margin_usdt * applied_leverage) / entry
         raw_amount = min(raw_amount, max_affordable_amount)
 
-    amount, notional = _ensure_minimums(ex, exchange_name, market_symbol, raw_amount, entry, market_type)
+    amount, notional = _ensure_minimums(
+        ex, exchange_name, market_symbol, raw_amount, entry, market_type
+    )
 
+    # try higher leverage automatically only if needed and allowed
     if market_type == "future" and min_notional and notional < min_notional and auto_leverage:
         for lev in range(max(1, applied_leverage), max_leverage + 1):
-            max_affordable_amount = (balance_usdt * 0.95 * lev) / entry
+            max_affordable_amount = (max_margin_usdt * lev) / entry
             candidate_amount, candidate_notional = _ensure_minimums(
-                ex, exchange_name, market_symbol, min(max_affordable_amount, max(raw_amount, amount)), entry, market_type
+                ex,
+                exchange_name,
+                market_symbol,
+                min(max_affordable_amount, max(raw_amount, amount)),
+                entry,
+                market_type,
             )
             if candidate_notional >= min_notional:
                 amount = candidate_amount
@@ -291,12 +325,12 @@ def _compute_dynamic_amount(ex, exchange_name: str, market_symbol: str, entry_pr
 
     if market_type == "future" and min_notional and notional < min_notional:
         raise ValueError(
-            f"Calculated notional {notional:.2f} USDT is below futures minimum {min_notional:.2f} USDT. "
-            f"Increase risk %, leverage cap, or account balance."
+            f"Calculated notional {notional:.2f} USDT is below futures minimum {min_notional:.2f} USDT."
         )
 
     if amount <= 0:
-        raise ValueError("Order amount rounded to zero. Increase risk % or account balance.")
+        raise ValueError("Order amount rounded to zero.")
+
     return amount, applied_leverage, notional, balance_usdt
 
 
@@ -488,6 +522,8 @@ def place_market_order(
     entry_price: float | None = None,
     stop_loss: float | None = None,
     take_profit: float | None = None,
+    max_margin_allocation_pct: float = 25.0,
+    safety_buffer_pct: float = 10.0,
 ):
     ex = build_exchange(
         exchange_name=exchange_name,
@@ -517,7 +553,16 @@ def place_market_order(
             leverage=requested_leverage,
             market_type=market_type,
             auto_leverage=bool(auto_leverage),
+            max_margin_allocation_pct=max_margin_allocation_pct,
+            safety_buffer_pct=safety_buffer_pct,
         )
+        print(
+            f"[SIZE DEBUG] symbol={market_symbol} entry={entry_price} sl={stop_loss} "
+            f"amount={final_amount} leverage={applied_leverage} "
+            f"notional={notional_estimate:.2f} balance={available_balance_usdt}",
+            flush=True,
+        )
+        
     else:
         final_amount, notional_estimate = _ensure_minimums(ex, exchange_name, market_symbol, final_amount, entry_price, market_type)
         available_balance_usdt = _balance_usdt(ex)
@@ -569,6 +614,8 @@ def place_market_order(
         "exit_orders": exit_orders.get("orders") or {},
         "cancelled_exit_orders": exit_orders.get("cancelled_orders") or [],
         "exit_order_warnings": exit_orders.get("warnings") or [],
+        "max_margin_allocation_pct": max_margin_allocation_pct,
+        "safety_buffer_pct": safety_buffer_pct,
     }
 
 

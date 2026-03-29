@@ -536,7 +536,7 @@ def bot_status():
     signal = raw_signal if isinstance(raw_signal, dict) else {}
     best_signal = raw_best_signal if isinstance(raw_best_signal, dict) else {}
 
-    primary = signal or best_signal
+    primary = best_signal or signal or {}
 
     order_wrap = last_result.get("order") if isinstance(last_result.get("order"), dict) else {}
 
@@ -549,13 +549,24 @@ def bot_status():
         "timeframe": config.get("timeframe", "1h"),
         "scan_timeframe": config.get("scan_timeframe") or config.get("timeframe", "1h"),
 
-        # Safe signal fields
+        # V4 top-level fields for Flutter
+        "mode": last_result.get("mode") or "hunter_v4",
+        "status": last_result.get("status") or "UNKNOWN",
         "symbol": primary.get("symbol") or last_result.get("symbol") or config.get("symbol"),
-        "action": primary.get("action") or last_result.get("signal") or last_result.get("status"),
+        "signal": primary.get("action") or last_result.get("signal") or last_result.get("status") or "",
+        "action": primary.get("action") or last_result.get("signal") or last_result.get("status") or "",
         "confidence_pct": primary.get("confidence_pct"),
-        "score": primary.get("hunter_score") or last_result.get("score"),
-        "quality": primary.get("quality") or primary.get("v3_quality") or last_result.get("quality"),
-        "reason": last_result.get("reason"),
+        "score": primary.get("hunter_score") or last_result.get("score") or 0.0,
+        "quality": (
+            primary.get("quality")
+            or primary.get("v4_quality")
+            or primary.get("v3_quality")
+            or last_result.get("quality")
+            or "UNKNOWN"
+        ),
+        "reason": last_result.get("reason") or "",
+        "decision": primary.get("v4_decision") or last_result.get("decision") or "",
+        "regime": primary.get("regime") or last_result.get("regime") or "",
 
         "last_result": last_result,
         "last_trade": order_wrap.get("order") or last_result.get("order"),
@@ -579,6 +590,7 @@ def bot_status():
         "top_candidates": last_result.get("top_candidates", []),
         "state": state,
     }
+
 
 
 @app.post("/bot/test-connection")

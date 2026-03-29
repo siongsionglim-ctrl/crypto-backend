@@ -3,42 +3,54 @@
   "symbol": "BTCUSDT",
   "api_key": "",
   "secret": "",
-  "passphrase": "string",
+  "passphrase": "",
+
   "auto_trade": true,
-  "amount": 0.001,
+  "amount": 0.0003,
   "testnet": true,
   "market_type": "future",
+
   "timeframe": "1h",
+  "scan_timeframe": "15m",
   "higher_timeframe": "4h",
+
   "leverage": 3,
   "max_daily_trades": 3,
-  "min_confidence_pct": 70.0,
-  "min_rr_ratio": 1.5,
-  "cooldown_minutes": 15,
-  "allowed_sides": [
-    "BUY",
-    "SELL"
-  ],
-  "max_daily_loss_pct": 5.0,
   "max_open_positions": 1,
+
+  "min_confidence_pct": 50.0,
+  "min_rr_ratio": 1.0,
+  "cooldown_minutes": 5,
+
+  "max_daily_loss_pct": 5.0,
   "max_consecutive_losses": 3,
-  "hunter_enabled": false,
+
+  "hunter_enabled": true,
+
   "scan_symbols": [
-    "BTCUSDT",
-    "ETHUSDT",
-    "SOLUSDT",
-    "XRPUSDT",
-    "BNBUSDT",
-    "DOGEUSDT",
-    "ADAUSDT",
-    "AVAXUSDT",
-    "LINKUSDT",
-    "DOTUSDT",
-    "SUIUSDT",
-    "TRXUSDT",
-    "LTCUSDT",
-    "BCHUSDT",
-    "APTUSDT"
+    "BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","BNBUSDT",
+    "DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","DOTUSDT",
+    "SUIUSDT","TRXUSDT","LTCUSDT","BCHUSDT","APTUSDT"
   ],
-  "scan_limit": 5
+  "scan_limit": 12,
+
+  // 🔥 V4 CORE SETTINGS
+  "hunter_version": "v4_futures",
+  "hunter_mode": "balanced",
+
+  "hunter_strong_threshold": 52.0,
+  "hunter_medium_threshold": 42.0,
+
+  "hunter_min_rr": 1.1,
+  "hunter_min_volume_ratio": 0.95,
+
+  "hunter_htf_timeframe": "1h",
+  "hunter_enable_htf_confirm": true,
+  "hunter_enable_regime_filter": true,
+
+  "hunter_wait_pullback_enabled": true,
+  "hunter_momentum_trigger_pct": 58.0,
+  "hunter_momentum_volume_ratio": 1.05,
+
+  "hunter_overextension_penalty": 15.0
 }

@@ -28,6 +28,8 @@ def _default_config() -> dict[str, Any]:
         "leverage": 3,
         "auto_leverage": True,
         "risk_per_trade_pct": 1.0,
+        "max_margin_allocation_pct": 20.0,
+        "safety_buffer_pct": 10.0,
 
         # Hunter v2 risk profile
         "max_daily_trades": 5,
