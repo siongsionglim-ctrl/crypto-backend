@@ -27,6 +27,12 @@
 
   "hunter_enabled": true,
 
+  "risk_per_trade_pct": 1.0,
+  "max_margin_allocation_pct": 20.0,
+  "safety_buffer_pct": 10.0,
+  "auto_leverage": true,
+
+
   "scan_symbols": [
     "BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","BNBUSDT",
     "DOGEUSDT","ADAUSDT","AVAXUSDT","LINKUSDT","DOTUSDT",
@@ -34,7 +40,7 @@
   ],
   "scan_limit": 12,
 
-  // 🔥 V4 CORE SETTINGS
+
   "hunter_version": "v4_futures",
   "hunter_mode": "balanced",
 
