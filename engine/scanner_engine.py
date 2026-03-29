@@ -226,6 +226,8 @@ def scan_symbols(
     qualified = [r for r in results if r.get("passes_minimums")]
     source = "websocket" if exchange.lower() == "binance" and websocket_enabled else "rest"
     top_candidates = qualified if qualified else results
+    print("[SCAN DEBUG] qualified_count =", len(qualified), "results_count =", len(results), "strategy_version=v3", flush=True)
+    print("[SCAN DEBUG] first_top_symbols =", [x.get("symbol") for x in top_candidates[:5]], flush=True)
 
     return {
         "ok": True,
