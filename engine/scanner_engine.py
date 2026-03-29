@@ -238,5 +238,5 @@ def scan_symbols(
         "top": top_candidates[:limit],
         "all": results[:limit],
         "errors": errors[:10],
-        "strategy_version": "v2",
+        "strategy_version": "v3",
     }
