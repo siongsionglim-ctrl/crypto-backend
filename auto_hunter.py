@@ -53,7 +53,8 @@ def _norm(v: float, lo: float, hi: float) -> float:
 def _score_signal(signal: dict, config: dict | None = None, htf_signal: dict | None = None) -> tuple[float, list[str], dict]:
     config = config or {}
     reasons: list[str] = []
-    breakdown: dict[str, float] = {}
+    
+    score_breakdown: dict[str, float] = {}
     action = str(signal.get("action") or "HOLD").upper().strip()
     regime = _classify_regime(signal)
 
@@ -64,7 +65,7 @@ def _score_signal(signal: dict, config: dict | None = None, htf_signal: dict | N
     setup_quality = _safe_float(signal.get("setup_quality"), 0.0)
     direction_edge = _safe_float(signal.get("direction_edge"), 0.0)
     breakout = _safe_float(signal.get("breakout_probability_pct"), 0.0)
-    breakdown = _safe_float(signal.get("breakdown_probability_pct"), 0.0)
+    breakdown_prob = _safe_float(signal.get("breakdown_probability_pct"), 0.0)
     bounce = _safe_float(signal.get("bounce_probability_pct"), 0.0)
 
     total = 0.0
@@ -77,18 +78,18 @@ def _score_signal(signal: dict, config: dict | None = None, htf_signal: dict | N
         + _norm(direction_edge, 3.0, 20.0) * 4.0
     )
     total += base_quality
-    breakdown["base_quality"] = round(base_quality, 2)
+    score_breakdown["base_quality"] = round(base_quality, 2)
     reasons.append(f"base={base_quality:.1f}")
 
     # RR quality
     rr_quality = _norm(rr, 1.0, 2.5) * 12.0
     total += rr_quality
-    breakdown["rr_quality"] = round(rr_quality, 2)
+    score_breakdown["rr_quality"] = round(rr_quality, 2)
 
     # Volume quality
     volume_quality = _norm(volume_ratio, 0.95, 1.8) * 10.0
     total += volume_quality
-    breakdown["volume_quality"] = round(volume_quality, 2)
+    score_breakdown["volume_quality"] = round(volume_quality, 2)
 
     # Regime fit
     regime_fit = 0.0
@@ -96,7 +97,7 @@ def _score_signal(signal: dict, config: dict | None = None, htf_signal: dict | N
         if action == "BUY":
             regime_fit += _norm(breakout, 50.0, 80.0) * 8.0
         elif action == "SELL":
-            regime_fit += _norm(breakdown, 50.0, 80.0) * 8.0
+            regime_fit += _norm(breakdown_prob, 50.0, 80.0) * 8.0
         else:
             regime_fit -= 8.0
     elif regime == "range":
@@ -108,14 +109,14 @@ def _score_signal(signal: dict, config: dict | None = None, htf_signal: dict | N
         reasons.append("penalty=choppy_regime")
 
     total += regime_fit
-    breakdown["regime_fit"] = round(regime_fit, 2)
+    score_breakdown["regime_fit"] = round(regime_fit, 2)
 
     # HTF alignment
     htf_score = 0.0
     if bool(config.get("hunter_enable_htf_confirm", True)):
         htf_score = _htf_alignment_score(signal, htf_signal)
         total += htf_score
-    breakdown["htf_alignment"] = round(htf_score, 2)
+    score_breakdown["htf_alignment"] = round(htf_score, 2)
     if htf_score < 0:
         reasons.append("penalty=htf_misaligned")
     elif htf_score > 0:
@@ -124,12 +125,12 @@ def _score_signal(signal: dict, config: dict | None = None, htf_signal: dict | N
     # Momentum boost
     momentum = _momentum_boost(signal, config)
     total += momentum
-    breakdown["momentum_boost"] = round(momentum, 2)
+    score_breakdown["momentum_boost"] = round(momentum, 2)
 
     # Entry efficiency
     entry_eff = _entry_efficiency_penalty(signal, config)
     total += entry_eff
-    breakdown["entry_efficiency"] = round(entry_eff, 2)
+    score_breakdown["entry_efficiency"] = round(entry_eff, 2)
 
     # Hard penalties
     if action == "HOLD":
@@ -143,9 +144,9 @@ def _score_signal(signal: dict, config: dict | None = None, htf_signal: dict | N
         reasons.append("penalty=low_volume")
 
     total = _clamp(total, 0.0, 100.0)
-    breakdown["total"] = round(total, 2)
+    score_breakdown["total"] = round(total, 2)
 
-    return round(total, 2), reasons, breakdown
+    return round(total, 2), reasons, score_breakdown
 
 
 def _rank_candidates(scan_result: dict | None, config: dict | None = None) -> list[dict]:
