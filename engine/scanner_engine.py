@@ -223,8 +223,9 @@ def scan_symbols(
 
     results.sort(key=lambda x: x.get("scan_score", -9999), reverse=True)
 
-    qualified = [r for r in results if r.get("qualifies")]
+    qualified = [r for r in results if r.get("passes_minimums")]
     source = "websocket" if exchange.lower() == "binance" and websocket_enabled else "rest"
+    top_candidates = qualified if qualified else results
 
     return {
         "ok": True,
@@ -234,7 +235,7 @@ def scan_symbols(
         "data_source": source,
         "scanned_count": len(symbols),
         "qualified_count": len(qualified),
-        "top": qualified[:limit],
+        "top": top_candidates[:limit],
         "all": results[:limit],
         "errors": errors[:10],
         "strategy_version": "v2",

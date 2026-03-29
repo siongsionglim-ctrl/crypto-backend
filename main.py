@@ -278,6 +278,8 @@ def _run_bot_cycle(config: dict) -> dict:
             scan_result = _SCAN_CACHE["data"]
         else:
             scan_result = _run_and_cache_scan(**params)
+            _log(f"scan_result keys={list((scan_result or {}).keys())}")
+            _log(f"scan_result top count={len((scan_result or {}).get('top', []) or [])}")
 
         if available_balance is not None and available_balance < min_balance:
             _log(f"balance gate active available={available_balance:.4f} min={min_balance:.4f}")

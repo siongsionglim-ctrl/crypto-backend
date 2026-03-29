@@ -308,6 +308,8 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
     symbols = config.get("scan_symbols") or [
         "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "SUIUSDT",
     ]
+    print("[HUNTER DEBUG] scan_result keys =", list((scan_result or {}).keys()), flush=True)
+    print("[HUNTER DEBUG] top count =", len((scan_result or {}).get("top", []) or []), flush=True)
 
     scanner_confidence = float(config.get("scanner_min_confidence_pct", 45.0))
     scanner_rr = float(config.get("scanner_min_rr_ratio", 0.8))
