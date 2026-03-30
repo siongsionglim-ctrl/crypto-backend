@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from math import exp
-from typing import Optional
+from typing import Optional, Literal
 
 
 @dataclass
@@ -80,6 +80,98 @@ class SmartMoneySignal:
     trigger_high: float
     trigger_low: float
 
+
+
+
+def _clamp(value: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, value))
+
+
+def _buffer_value(reference_price: float, safe_atr: float, buffer_atr: float, buffer_pct: float) -> float:
+    atr_buffer = max(0.0, safe_atr * max(0.0, buffer_atr))
+    pct_buffer = max(0.0, reference_price * max(0.0, buffer_pct) / 100.0)
+    return max(atr_buffer, pct_buffer)
+
+
+def _recent_structure_stop(
+    side: Literal["BUY", "SELL"],
+    candles: list[Candle],
+    fallback_level: float,
+    order_block_sl: float | None,
+    safe_atr: float,
+) -> float:
+    side = side.upper().strip()
+    if side == "BUY":
+        swing_lows = recent_swing_lows(candles, 80)
+        candidates = list(swing_lows[-3:])
+        if order_block_sl is not None:
+            candidates.append(float(order_block_sl))
+        candidates.append(float(fallback_level))
+        return min(candidates) if candidates else float(fallback_level)
+
+    swing_highs = recent_swing_highs(candles, 80)
+    candidates = list(swing_highs[-3:])
+    if order_block_sl is not None:
+        candidates.append(float(order_block_sl))
+    candidates.append(float(fallback_level))
+    return max(candidates) if candidates else float(fallback_level)
+
+
+def resolve_hybrid_stop(
+    side: Literal["BUY", "SELL"],
+    entry: float,
+    candles: list[Candle],
+    fallback_level: float,
+    safe_atr: float,
+    order_block_sl: float | None = None,
+    sl_mode: str = "hybrid",
+    atr_multiplier: float = 1.35,
+    buffer_atr: float = 0.15,
+    buffer_pct: float = 0.10,
+    min_stop_pct: float = 0.35,
+) -> float:
+    side = side.upper().strip()
+    ref_entry = max(1e-9, float(entry))
+    ref_safe_atr = max(1e-9, float(safe_atr))
+    sl_mode = str(sl_mode or "hybrid").lower().strip()
+
+    buffer_value = _buffer_value(ref_entry, ref_safe_atr, buffer_atr, buffer_pct)
+    atr_distance = max(ref_safe_atr * max(0.1, atr_multiplier), ref_entry * max(0.0, min_stop_pct) / 100.0)
+
+    structure_anchor = _recent_structure_stop(
+        side=side,
+        candles=candles,
+        fallback_level=float(fallback_level),
+        order_block_sl=order_block_sl,
+        safe_atr=ref_safe_atr,
+    )
+
+    if side == "BUY":
+        structure_stop = structure_anchor - buffer_value
+        atr_stop = ref_entry - atr_distance
+        if sl_mode == "structure":
+            stop = structure_stop
+        elif sl_mode == "atr":
+            stop = atr_stop
+        else:
+            stop = min(structure_stop, atr_stop)
+
+        max_allowed_stop = ref_entry - ref_entry * max(0.0, min_stop_pct) / 100.0
+        stop = min(stop, max_allowed_stop)
+        return min(stop, ref_entry - 1e-9)
+
+    structure_stop = structure_anchor + buffer_value
+    atr_stop = ref_entry + atr_distance
+    if sl_mode == "structure":
+        stop = structure_stop
+    elif sl_mode == "atr":
+        stop = atr_stop
+    else:
+        stop = max(structure_stop, atr_stop)
+
+    min_allowed_stop = ref_entry + ref_entry * max(0.0, min_stop_pct) / 100.0
+    stop = max(stop, min_allowed_stop)
+    return max(stop, ref_entry + 1e-9)
 
 def ema_from_candles(candles: list[Candle], period: int) -> list[float]:
     if not candles:
@@ -398,7 +490,15 @@ def find_order_block(candles: list[Candle], bullish: bool) -> Optional[OrderBloc
     return None
 
 
-def build_trade_idea(candles: list[Candle]) -> TradeIdea:
+def build_trade_idea(
+    candles: list[Candle],
+    sl_mode: str = "hybrid",
+    sl_atr_multiplier: float = 1.35,
+    sl_buffer_atr: float = 0.15,
+    sl_buffer_pct: float = 0.10,
+    min_stop_pct: float = 0.35,
+    target_rr: float = 1.4,
+) -> TradeIdea:
     current = candles[-1].close
 
     lookback_range = min(20, max(0, len(candles) - 2))
@@ -606,9 +706,21 @@ def build_trade_idea(candles: list[Candle]) -> TradeIdea:
         entry_high = max(preferred_zone_low, preferred_zone_high)
         too_extended = current > entry_high + safe_atr * 0.55
         entry = current if breakout_confirmed and not too_extended else (entry_low + entry_high) / 2.0
-        sl = (min(support_level, bullish_ob.sl) - safe_atr * 0.10) if bullish_ob else support_level - safe_atr * 0.35
-        tp = max(resistance_level, current + safe_atr * 1.35)
+        sl = resolve_hybrid_stop(
+            side="BUY",
+            entry=entry,
+            candles=candles,
+            fallback_level=support_level,
+            safe_atr=safe_atr,
+            order_block_sl=(bullish_ob.sl if bullish_ob else None),
+            sl_mode=sl_mode,
+            atr_multiplier=sl_atr_multiplier,
+            buffer_atr=sl_buffer_atr,
+            buffer_pct=sl_buffer_pct,
+            min_stop_pct=min_stop_pct,
+        )
         risk = max(1e-7, entry - sl)
+        tp = max(resistance_level, current + safe_atr * 1.35, entry + risk * max(1.0, target_rr))
         reward = max(0.0, tp - entry)
         rr_ratio = reward / risk if risk > 0 else 0.0
         action = "BUY"
@@ -631,9 +743,21 @@ def build_trade_idea(candles: list[Candle]) -> TradeIdea:
         entry_high = max(preferred_zone_low, preferred_zone_high)
         too_extended = current < entry_low - safe_atr * 0.55
         entry = current if breakdown_confirmed and not too_extended else (entry_low + entry_high) / 2.0
-        sl = (max(resistance_level, bearish_ob.sl) + safe_atr * 0.10) if bearish_ob else resistance_level + safe_atr * 0.35
-        tp = min(support_level, current - safe_atr * 1.35)
+        sl = resolve_hybrid_stop(
+            side="SELL",
+            entry=entry,
+            candles=candles,
+            fallback_level=resistance_level,
+            safe_atr=safe_atr,
+            order_block_sl=(bearish_ob.sl if bearish_ob else None),
+            sl_mode=sl_mode,
+            atr_multiplier=sl_atr_multiplier,
+            buffer_atr=sl_buffer_atr,
+            buffer_pct=sl_buffer_pct,
+            min_stop_pct=min_stop_pct,
+        )
         risk = max(1e-7, sl - entry)
+        tp = min(support_level, current - safe_atr * 1.35, entry - risk * max(1.0, target_rr))
         reward = max(0.0, entry - tp)
         rr_ratio = reward / risk if risk > 0 else 0.0
         action = "SELL"
@@ -664,7 +788,7 @@ def build_trade_idea(candles: list[Candle]) -> TradeIdea:
         range_high=range_high,
         range_low=range_low,
         current=current,
-        reason="Python advanced engine",
+        reason=f"Python advanced engine ({sl_mode} SL)",
         trend_strength_pct=trend_strength_pct,
         breakout_probability_pct=breakout_probability_pct,
         breakdown_probability_pct=breakdown_probability_pct,

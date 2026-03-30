@@ -185,6 +185,12 @@ def generate_signal(
     market_type: str = "future",
     testnet: bool = True,
     websocket_enabled: bool = True,
+    sl_mode: str = "hybrid",
+    sl_atr_multiplier: float = 1.35,
+    sl_buffer_atr: float = 0.15,
+    sl_buffer_pct: float = 0.10,
+    min_stop_pct: float = 0.35,
+    target_rr: float = 1.4,
 ):
     rows = fetch_candles(
         symbol,
@@ -208,7 +214,15 @@ def generate_signal(
         for r in rows
     ]
 
-    idea = build_trade_idea(candles)
+    idea = build_trade_idea(
+        candles,
+        sl_mode=sl_mode,
+        sl_atr_multiplier=sl_atr_multiplier,
+        sl_buffer_atr=sl_buffer_atr,
+        sl_buffer_pct=sl_buffer_pct,
+        min_stop_pct=min_stop_pct,
+        target_rr=target_rr,
+    )
     regime = _calc_market_regime(idea)
     final_action, decision_reason = decide_action_from_idea(idea)
     stop_distance_pct = ((idea.current - idea.sl) / idea.current * 100.0) if idea.current and idea.sl and final_action == "BUY" else ((idea.sl - idea.current) / idea.current * 100.0) if idea.current and idea.sl and final_action == "SELL" else None
@@ -250,6 +264,12 @@ def generate_signal(
         "grade": idea.grade,
         "confidence_reasons": idea.confidence_reasons,
         "reason": idea.reason,
+        "sl_mode": sl_mode,
+        "sl_atr_multiplier": sl_atr_multiplier,
+        "sl_buffer_atr": sl_buffer_atr,
+        "sl_buffer_pct": sl_buffer_pct,
+        "min_stop_pct": min_stop_pct,
+        "target_rr": target_rr,
         "stop_distance_pct": stop_distance_pct,
         "tp_distance_pct": tp_distance_pct,
         "should_execute_now": should_execute_now,

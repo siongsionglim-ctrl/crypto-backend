@@ -166,6 +166,12 @@ def scan_symbols(
                 market_type=market_type,
                 testnet=testnet,
                 websocket_enabled=websocket_enabled,
+                sl_mode="hybrid",
+                sl_atr_multiplier=1.35,
+                sl_buffer_atr=0.15,
+                sl_buffer_pct=0.10,
+                min_stop_pct=0.35,
+                target_rr=max(1.2, float(min_rr_ratio or 1.2)),
             )
             if not candles:
                 errors.append({"symbol": symbol, "reason": "No data"})

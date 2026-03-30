@@ -31,6 +31,13 @@ def _default_config() -> dict[str, Any]:
         "max_margin_allocation_pct": 20.0,
         "safety_buffer_pct": 10.0,
 
+        "sl_mode": "hybrid",
+        "sl_atr_multiplier": 1.35,
+        "sl_buffer_atr": 0.15,
+        "sl_buffer_pct": 0.10,
+        "min_stop_pct": 0.35,
+        "target_rr": 1.4,
+
         # Hunter v2 risk profile
         "max_daily_trades": 5,
         "min_confidence_pct": 48.0,

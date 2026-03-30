@@ -32,6 +32,13 @@
   "safety_buffer_pct": 10.0,
   "auto_leverage": true,
 
+  "sl_mode": "hybrid",
+  "sl_atr_multiplier": 1.35,
+  "sl_buffer_atr": 0.15,
+  "sl_buffer_pct": 0.10,
+  "min_stop_pct": 0.35,
+  "target_rr": 1.4,
+
 
   "scan_symbols": [
     "BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","BNBUSDT",

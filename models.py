@@ -23,6 +23,12 @@ class TradeRequest(BaseModel):
     leverage: int = 10
     auto_leverage: bool = True
     risk_per_trade_pct: float = 1.0
+    sl_mode: str = "hybrid"
+    sl_atr_multiplier: float = 1.35
+    sl_buffer_atr: float = 0.15
+    sl_buffer_pct: float = 0.10
+    min_stop_pct: float = 0.35
+    target_rr: float = 1.4
     entry_price: float | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
@@ -47,6 +53,13 @@ class BotConfigRequest(BaseModel):
     min_available_balance_usdt: float = 5.0
     balance_cache_ttl_seconds: int = 25
     loop_interval_sec: int = 60
+
+    sl_mode: str = "hybrid"
+    sl_atr_multiplier: float = 1.35
+    sl_buffer_atr: float = 0.15
+    sl_buffer_pct: float = 0.10
+    min_stop_pct: float = 0.35
+    target_rr: float = 1.4
 
     max_daily_trades: int = 50
     min_confidence_pct: float = 80.0

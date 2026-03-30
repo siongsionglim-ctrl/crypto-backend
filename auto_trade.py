@@ -70,6 +70,12 @@ def run_auto_trade(config: dict):
         timeframe=config.get("timeframe", "1h"),
         market_type=config.get("market_type", "future"),
         testnet=bool(config.get("testnet", True)),
+        sl_mode=str(config.get("sl_mode", "hybrid")),
+        sl_atr_multiplier=float(config.get("sl_atr_multiplier", 1.35)),
+        sl_buffer_atr=float(config.get("sl_buffer_atr", 0.15)),
+        sl_buffer_pct=float(config.get("sl_buffer_pct", 0.10)),
+        min_stop_pct=float(config.get("min_stop_pct", 0.35)),
+        target_rr=float(config.get("target_rr", config.get("min_rr_ratio", 1.4))),
     )
 
     action = signal.get("action")
