@@ -157,10 +157,10 @@ def scan_symbols(
     results = []
     errors = []
 
-    print(f"[SCAN] processing {symbol}", flush=True)
 
     for symbol in symbols:
         try:
+            print(f"[SCAN] processing {symbol}", flush=True)
             candles = fetch_candles(
                 symbol,
                 exchange=exchange,
