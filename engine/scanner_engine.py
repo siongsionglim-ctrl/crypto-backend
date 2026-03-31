@@ -157,6 +157,8 @@ def scan_symbols(
     results = []
     errors = []
 
+    print(f"[SCAN] processing {symbol}", flush=True)
+
     for symbol in symbols:
         try:
             candles = fetch_candles(
@@ -169,10 +171,12 @@ def scan_symbols(
                 sl_mode="hybrid",
                 sl_atr_multiplier=1.35,
                 sl_buffer_atr=0.15,
-                sl_buffer_pct=0.10,
-                min_stop_pct=0.35,
+                sl_buffer_pct=0.001,
+                min_stop_pct=0.0035,
                 target_rr=max(1.2, float(min_rr_ratio or 1.2)),
             )
+            print(f"[SCAN] candles len={len(candles)} symbol={symbol}", flush=True)
+
             if not candles:
                 errors.append({"symbol": symbol, "reason": "No data"})
                 candles = []
@@ -185,6 +189,8 @@ def scan_symbols(
                 testnet=testnet,
                 websocket_enabled=websocket_enabled,
             )
+            print(f"[SCAN] signal={signal}", flush=True)
+
             if signal.get("error"):
                 errors.append({"symbol": symbol, "reason": signal["error"]})
                 signal = {
@@ -281,6 +287,7 @@ def scan_symbols(
             results.append(scored)
 
         except Exception as e:
+            print(f"[SCAN ERROR] symbol={symbol} error={e}", flush=True)
             errors.append({"symbol": symbol, "reason": str(e)})
 
     results.sort(key=lambda x: x.get("scan_score", -9999), reverse=True)
