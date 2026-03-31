@@ -128,7 +128,7 @@ def resolve_hybrid_stop(
     atr_multiplier: float = 1.35,
     buffer_atr: float = 0.15,
     buffer_pct: float = 0.10,
-    min_stop_pct: float = 0.35,
+    min_stop_pct: float = 0.0035,  # 0.35%
 ) -> float:
     side = side.upper().strip()
     ref_entry = max(1e-9, float(entry))
@@ -489,6 +489,56 @@ def find_order_block(candles: list[Candle], bullish: bool) -> Optional[OrderBloc
 
     return None
 
+def _clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
+
+
+def _resolve_hybrid_stop_and_tp(
+    *,
+    side: str,  # "long" or "short"
+    entry: float,
+    support_level: float,
+    resistance_level: float,
+    safe_atr: float,
+    target_rr: float = 1.25,
+    atr_mult: float = 1.35,
+    buffer_atr: float = 0.15,
+    min_stop_pct: float = 0.0035,
+):
+    side = side.lower().strip()
+
+    if side == "long":
+        structure_sl = support_level - safe_atr * buffer_atr
+        atr_sl = entry - safe_atr * atr_mult
+
+        # hybrid = tighter of the two valid stops, but never too tight
+        raw_sl = max(structure_sl, atr_sl)
+        max_sl = entry * (1.0 - min_stop_pct)
+        sl = min(raw_sl, max_sl)
+
+        if sl >= entry:
+            sl = entry * (1.0 - min_stop_pct)
+
+        risk = max(1e-9, entry - sl)
+        tp = max(resistance_level, entry + risk * target_rr)
+        rr = (tp - entry) / risk if risk > 0 else 0.0
+        return sl, tp, rr
+
+    structure_sl = resistance_level + safe_atr * buffer_atr
+    atr_sl = entry + safe_atr * atr_mult
+
+    raw_sl = min(structure_sl, atr_sl)
+    min_sl = entry * (1.0 + min_stop_pct)
+    sl = max(raw_sl, min_sl)
+
+    if sl <= entry:
+        sl = entry * (1.0 + min_stop_pct)
+
+    risk = max(1e-9, sl - entry)
+    tp = min(support_level, entry - risk * target_rr)
+    rr = (entry - tp) / risk if risk > 0 else 0.0
+    return sl, tp, rr
+
 
 def build_trade_idea(
     candles: list[Candle],
@@ -496,8 +546,8 @@ def build_trade_idea(
     sl_atr_multiplier: float = 1.35,
     sl_buffer_atr: float = 0.15,
     sl_buffer_pct: float = 0.10,
-    min_stop_pct: float = 0.35,
-    target_rr: float = 1.4,
+    min_stop_pct: float = 0.0035,
+    target_rr: float = 1.2,
 ) -> TradeIdea:
     current = candles[-1].close
 
@@ -720,7 +770,17 @@ def build_trade_idea(
             min_stop_pct=min_stop_pct,
         )
         risk = max(1e-7, entry - sl)
-        tp = max(resistance_level, current + safe_atr * 1.35, entry + risk * max(1.0, target_rr))
+        # enforce RR-based TP FIRST
+        tp_rr = entry + risk * target_rr
+
+        # don't exceed structure too much
+        tp_cap = resistance_level + safe_atr * 0.5
+
+        tp = min(tp_rr, tp_cap)
+
+        # ensure TP is still valid
+        if tp <= entry:
+            tp = entry + risk * target_rr
         reward = max(0.0, tp - entry)
         rr_ratio = reward / risk if risk > 0 else 0.0
         action = "BUY"
@@ -757,7 +817,14 @@ def build_trade_idea(
             min_stop_pct=min_stop_pct,
         )
         risk = max(1e-7, sl - entry)
-        tp = min(support_level, current - safe_atr * 1.35, entry - risk * max(1.0, target_rr))
+        tp_rr = entry - risk * target_rr
+        tp_cap = support_level - safe_atr * 0.5
+
+        tp = max(tp_rr, tp_cap)
+
+        if tp >= entry:
+            tp = entry - risk * target_rr
+
         reward = max(0.0, entry - tp)
         rr_ratio = reward / risk if risk > 0 else 0.0
         action = "SELL"

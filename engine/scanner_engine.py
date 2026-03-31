@@ -206,7 +206,7 @@ def scan_symbols(
             # broad filter only
             passes_minimums = (
                 confidence >= min_confidence_pct
-                and rr >= min_rr_ratio
+                and rr >= min_rr_ratio * 0.9
             )
 
             # softer qualification for scanner output
