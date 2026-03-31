@@ -251,9 +251,9 @@ def generate_signal(
         (raw_action == "SELL" and bearish_structure)
     )
 
-    momentum_ok = volume_ratio >= 0.45
+    momentum_ok = volume_ratio >= 0.25
     trend_ok = trend >= 55.0
-    confidence_ok = confidence >= 45.0
+    confidence_ok = confidence >= 42.0
     rr_ok = rr >= 0.80
     not_extended = entry_distance_pct <= 2.5
     regime_ok = not regime["is_choppy"]
