@@ -268,12 +268,26 @@ def generate_signal(
         and not_extended
         and regime_ok
     )
+    breakout_strong = (
+        trend >= 75
+        and confidence >= 70
+        and volume_ratio >= 1.2
+    )
+
+    breakout_entry = (
+        raw_action in ("BUY", "SELL")
+        and breakout_strong
+        and regime_ok
+    )
+
+    # FINAL EXECUTION (UPGRADE)
+    v2_should_execute = v2_should_execute or breakout_entry
 
     if final_action == "HOLD" and v2_should_execute:
         final_action = raw_action
         decision_reason = (
-            f"V2 execute: structure/trend/momentum aligned | "
-            f"conf={confidence:.1f} rr={rr:.2f} trend={trend:.1f} vol={volume_ratio:.2f}"
+            f"V2.2 execute | conf={confidence:.1f} rr={rr:.2f} "
+            f"trend={trend:.1f} vol={volume_ratio:.2f}"
         )
 
     stop_distance_pct = (
