@@ -175,7 +175,7 @@ def scan_symbols(
             )
             if not candles:
                 errors.append({"symbol": symbol, "reason": "No data"})
-                candles = []  # allow fallback
+                candles = []
 
             signal = generate_signal(
                 symbol,
@@ -203,11 +203,36 @@ def scan_symbols(
             trend = _safe_float(signal.get("trend_strength_pct"))
             action = str(signal.get("action", "HOLD")).upper()
 
+            # ✅ ADD DEBUG HERE
+            print(
+                f"[FILTER DEBUG] symbol={symbol} action={action} "
+                f"confidence={confidence:.1f} rr={rr:.2f} trend={trend:.1f} "
+                f"should_execute_now={signal.get('should_execute_now')} "
+                f"is_choppy={signal.get('is_choppy')}",
+                flush=True,
+            )
+
             # broad filter only
             passes_minimums = (
                 confidence >= min_confidence_pct
                 and rr >= min_rr_ratio * 0.9
             )
+
+            # ✅ optional reject-reason debug
+            if not passes_minimums:
+                reasons = []
+                if confidence < min_confidence_pct:
+                    reasons.append(
+                        f"confidence {confidence:.1f} < min_confidence_pct {min_confidence_pct:.1f}"
+                    )
+                if rr < min_rr_ratio * 0.9:
+                    reasons.append(
+                        f"rr {rr:.2f} < min_rr_ratio*0.9 {(min_rr_ratio * 0.9):.2f}"
+                    )
+                print(
+                    f"[FILTER REJECT] symbol={symbol} stage=passes_minimums reason={' | '.join(reasons)}",
+                    flush=True,
+                )
 
             # softer qualification for scanner output
             qualifies = (
@@ -215,19 +240,35 @@ def scan_symbols(
                 and passes_minimums
                 and trend >= 40.0
             )
+
+            # ✅ optional qualifies debug
+            if not qualifies:
+                reasons = []
+                if action not in ("BUY", "SELL"):
+                    reasons.append(f"action={action}")
+                if not passes_minimums:
+                    reasons.append("passes_minimums=False")
+                if trend < 40.0:
+                    reasons.append(f"trend {trend:.1f} < 40.0")
+                print(
+                    f"[FILTER REJECT] symbol={symbol} stage=qualifies reason={' | '.join(reasons)}",
+                    flush=True,
+                )
+
             scan_score = rank_score(signal)
             scan_score_reasons = [
                 f"action={signal.get('action', 'HOLD')}",
                 f"confidence={_safe_float(signal.get('confidence_pct')):.1f}",
                 f"rr={_safe_float(signal.get('rr_ratio')):.2f}",
             ]
-            
+
             if bool(signal.get("is_choppy")):
                 scan_score -= 8.0
                 scan_score_reasons.append("penalty=choppy")
             if not bool(signal.get("should_execute_now")):
                 scan_score -= 6.0
                 scan_score_reasons.append("penalty=not_execute_now")
+
             scored = {
                 **signal,
                 "symbol": symbol,
@@ -261,5 +302,5 @@ def scan_symbols(
         "top": top_candidates[:limit],
         "all": results[:limit],
         "errors": errors[:10],
-        "strategy_version": "v3",
+        "strategy_version": "v4",
     }
