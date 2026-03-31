@@ -545,7 +545,7 @@ def build_trade_idea(
     sl_mode: str = "hybrid",
     sl_atr_multiplier: float = 1.35,
     sl_buffer_atr: float = 0.15,
-    sl_buffer_pct: float = 0.10,
+    sl_buffer_pct: float = 0.001,
     min_stop_pct: float = 0.0035,
     target_rr: float = 1.2,
 ) -> TradeIdea:

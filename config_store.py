@@ -78,19 +78,23 @@ def _default_config() -> dict[str, Any]:
         "range_risk_multiplier": 0.7,
         "range_min_hunter_score": 48.0,
 
+        "scanner_min_confidence_pct": 40.0,
+        "scanner_min_rr_ratio": 0.7,
+        "min_hunter_score": 50.0,
+
         "hunter_version": "v4_futures",
         "hunter_mode": "balanced",          # conservative / balanced / aggressive / sniper
         "hunter_strong_threshold": 60.0,
         "hunter_medium_threshold": 48.0,
-        "hunter_min_rr": 1.3,
-        "hunter_min_volume_ratio": 1.0,
+        "hunter_min_rr": 1.1,
+        "hunter_min_volume_ratio": 0.45,
         "hunter_htf_timeframe": "1h",
         "hunter_enable_htf_confirm": True,
         "hunter_enable_regime_filter": True,
         "hunter_wait_pullback_enabled": True,
         "hunter_overextension_penalty": 15.0,
-        "hunter_momentum_trigger_pct": 65.0,
-        "hunter_momentum_volume_ratio": 1.1,
+        "hunter_momentum_trigger_pct": 60.0,
+        "hunter_momentum_volume_ratio": 0.45,
             }
 
 

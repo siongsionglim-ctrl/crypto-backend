@@ -188,9 +188,9 @@ def generate_signal(
     sl_mode: str = "hybrid",
     sl_atr_multiplier: float = 1.35,
     sl_buffer_atr: float = 0.15,
-    sl_buffer_pct: float = 0.10,
-    min_stop_pct: float = 0.35,
-    target_rr: float = 1.4,
+    sl_buffer_pct: float = 0.001,
+    min_stop_pct: float = 0.0035,
+    target_rr: float = 1.2,
 ):
     rows = fetch_candles(
         symbol,
@@ -223,17 +223,73 @@ def generate_signal(
         min_stop_pct=min_stop_pct,
         target_rr=target_rr,
     )
+
     regime = _calc_market_regime(idea)
     final_action, decision_reason = decide_action_from_idea(idea)
-    stop_distance_pct = ((idea.current - idea.sl) / idea.current * 100.0) if idea.current and idea.sl and final_action == "BUY" else ((idea.sl - idea.current) / idea.current * 100.0) if idea.current and idea.sl and final_action == "SELL" else None
-    tp_distance_pct = ((idea.tp - idea.current) / idea.current * 100.0) if idea.current and idea.tp and final_action == "BUY" else ((idea.current - idea.tp) / idea.current * 100.0) if idea.current and idea.tp and final_action == "SELL" else None
 
-    should_execute_now = (
-        final_action in ("BUY", "SELL")
-        and not regime["is_choppy"]
-        and float(idea.confidence_pct or 0.0) >= 72
-        and float(idea.rr_ratio or 0.0) >= 1.25
-        and float(idea.trend_strength_pct or 0.0) >= 60
+    raw_action = str(idea.action or "HOLD").upper().strip()
+    confidence = float(idea.confidence_pct or 0.0)
+    rr = float(idea.rr_ratio or 0.0)
+    trend = float(idea.trend_strength_pct or 0.0)
+    volume_ratio = float(idea.volume_ratio or 0.0)
+    breakout = float(idea.breakout_probability_pct or 0.0)
+    breakdown = float(idea.breakdown_probability_pct or 0.0)
+
+    price = float(idea.current or 0.0)
+    entry = float(idea.entry or idea.current or 0.0)
+    entry_distance_pct = (
+        abs(price - entry) / price * 100.0
+        if price > 0 and entry > 0
+        else 0.0
+    )
+
+    bullish_structure = breakout >= max(55.0, breakdown + 8.0)
+    bearish_structure = breakdown >= max(55.0, breakout + 8.0)
+
+    structure_ok = (
+        (raw_action == "BUY" and bullish_structure) or
+        (raw_action == "SELL" and bearish_structure)
+    )
+
+    momentum_ok = volume_ratio >= 0.45
+    trend_ok = trend >= 55.0
+    confidence_ok = confidence >= 45.0
+    rr_ok = rr >= 0.80
+    not_extended = entry_distance_pct <= 2.5
+    regime_ok = not regime["is_choppy"]
+
+    v2_should_execute = (
+        raw_action in ("BUY", "SELL")
+        and structure_ok
+        and trend_ok
+        and confidence_ok
+        and rr_ok
+        and momentum_ok
+        and not_extended
+        and regime_ok
+    )
+
+    if final_action == "HOLD" and v2_should_execute:
+        final_action = raw_action
+        decision_reason = (
+            f"V2 execute: structure/trend/momentum aligned | "
+            f"conf={confidence:.1f} rr={rr:.2f} trend={trend:.1f} vol={volume_ratio:.2f}"
+        )
+
+    stop_distance_pct = (
+        ((idea.current - idea.sl) / idea.current * 100.0)
+        if idea.current and idea.sl and final_action == "BUY"
+        else ((idea.sl - idea.current) / idea.current * 100.0)
+        if idea.current and idea.sl and final_action == "SELL"
+        else None
+    )
+
+    tp_distance_pct = (
+        ((idea.tp - idea.current) / idea.current * 100.0)
+        if idea.current and idea.tp and final_action == "BUY"
+        else ((idea.current - idea.tp) / idea.current * 100.0)
+        if idea.current and idea.tp and final_action == "SELL"
+        else None
     )
 
     return {
@@ -243,7 +299,7 @@ def generate_signal(
         "market_type": market_type,
         "bias": idea.bias,
         "action": final_action,
-        "raw_action": idea.action,
+        "raw_action": raw_action,
         "decision_reason": decision_reason,
         "price": idea.current,
         "entry": idea.entry,
@@ -272,7 +328,7 @@ def generate_signal(
         "target_rr": target_rr,
         "stop_distance_pct": stop_distance_pct,
         "tp_distance_pct": tp_distance_pct,
-        "should_execute_now": should_execute_now,
+        "should_execute_now": v2_should_execute,
         "is_choppy": regime["is_choppy"],
         "choppy_score": regime["choppy_score"],
         "direction_edge": regime["direction_edge"],
@@ -280,6 +336,6 @@ def generate_signal(
         "market_regime": regime["regime"],
         "range_width_pct": regime["range_width_pct"],
         "setup_quality": regime["setup_quality"],
-        "strategy_version": "v4_futures",
+        "strategy_version": "v5_structure_momentum",
         "data_source": "websocket" if exchange == "binance" and websocket_enabled else "rest",
     }

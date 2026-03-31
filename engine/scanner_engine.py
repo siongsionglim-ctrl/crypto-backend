@@ -64,8 +64,13 @@ def rank_score(signal: Dict[str, Any]) -> float:
     score = 0.0
 
     # HOLD should be weak, but not totally discarded
-    if action == "HOLD":
+    raw_action = str(signal.get("raw_action") or action).upper().strip()
+    effective_action = str(signal.get("effective_action") or action).upper().strip()
+
+    if effective_action == "HOLD":
         score -= 20.0
+    elif action == "HOLD" and raw_action in ("BUY", "SELL"):
+        score += 6.0
 
     # base quality
     score += confidence * 0.28
@@ -286,7 +291,7 @@ def scan_symbols(
 
     results.sort(key=lambda x: x.get("scan_score", -9999), reverse=True)
 
-    qualified = [r for r in results if r.get("passes_minimums")]
+    qualified = [r for r in results if r.get("qualifies")]
     source = "websocket" if exchange.lower() == "binance" and websocket_enabled else "rest"
     top_candidates = qualified if qualified else results
     print("[SCAN DEBUG] qualified_count =", len(qualified), "results_count =", len(results), "strategy_version=v3", flush=True)
