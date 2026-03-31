@@ -35,7 +35,13 @@ def _safe_float(v, default=0.0) -> float:
 
 
 def rank_score(signal: Dict[str, Any]) -> float:
-    action = str(signal.get("action", "HOLD")).upper().strip()
+    action = str(signal.get("action", "HOLD")).upper()
+    raw_action = str(signal.get("raw_action", action)).upper()
+
+    # 🔥 FIX: allow execution override
+    if action == "HOLD" and raw_action in ("BUY", "SELL"):
+        if signal.get("should_execute_now"):
+            action = raw_action
 
     confidence = _safe_float(signal.get("confidence_pct"))
     rr = _safe_float(signal.get("rr_ratio"))

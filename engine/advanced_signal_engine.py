@@ -770,22 +770,27 @@ def build_trade_idea(
             min_stop_pct=min_stop_pct,
         )
         risk = max(1e-7, entry - sl)
-        # enforce RR-based TP FIRST
-        tp_rr = entry + risk * target_rr
 
-        # don't exceed structure too much
+        tp_rr = entry + risk * target_rr
         tp_cap = resistance_level + safe_atr * 0.5
 
-        tp = min(tp_rr, tp_cap)
+        trend_for_tp = trend_strength_pct  # or your actual trend variable
 
-        # ensure TP is still valid
+        if trend_for_tp >= 65:
+            tp = tp_rr
+        else:
+            tp = min(tp_rr, tp_cap)
+
         if tp <= entry:
             tp = entry + risk * target_rr
+
         reward = max(0.0, tp - entry)
         rr_ratio = reward / risk if risk > 0 else 0.0
         action = "BUY"
+
         if hard_bullish_invalidation or smc.displacement_down:
             action = "HOLD"
+            rr_ratio = 0.0
 
     elif bearish_bias:
         breakdown_confirmed = structure.broke_down or breakdown_probability_pct >= 58 or bearish_smc
@@ -820,7 +825,12 @@ def build_trade_idea(
         tp_rr = entry - risk * target_rr
         tp_cap = support_level - safe_atr * 0.5
 
-        tp = max(tp_rr, tp_cap)
+        trend_for_tp = trend_strength_pct
+
+        if trend_for_tp >= 65:
+            tp = tp_rr
+        else:
+            tp = max(tp_rr, tp_cap)
 
         if tp >= entry:
             tp = entry - risk * target_rr
@@ -828,8 +838,10 @@ def build_trade_idea(
         reward = max(0.0, entry - tp)
         rr_ratio = reward / risk if risk > 0 else 0.0
         action = "SELL"
+
         if hard_bearish_invalidation or smc.displacement_up:
             action = "HOLD"
+            rr_ratio = 0.0
 
     confidence_pct, grade, confidence_reasons = compute_confidence(
         trend_strength=trend_strength_pct,
