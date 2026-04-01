@@ -251,12 +251,30 @@ def generate_signal(
         (raw_action == "SELL" and bearish_structure)
     )
 
-    momentum_ok = volume_ratio >= 0.25
-    trend_ok = trend >= 55.0
-    confidence_ok = confidence >= 42.0
-    rr_ok = rr >= 0.80
+    is_choppy = bool(regime.get("is_choppy", False))
+    choppy_score = float(regime.get("choppy_score", 0))
+
+    # base thresholds
+    min_conf = 42.0
+    min_rr = 0.80
+    min_trend = 55.0
+    min_vol = 0.25
+
+    # tighten only when market is choppy
+    if is_choppy:
+        min_conf = 48.0
+        min_rr = 0.95
+        min_trend = 58.0
+        min_vol = 0.35
+
+    momentum_ok = volume_ratio >= min_vol
+    trend_ok = trend >= min_trend
+    confidence_ok = confidence >= min_conf
+    rr_ok = rr >= min_rr
     not_extended = entry_distance_pct <= 2.5
-    regime_ok = not regime["is_choppy"]
+
+    # only hard-block very messy chop
+    hard_choppy_block = is_choppy and choppy_score >= 4
 
     v2_should_execute = (
         raw_action in ("BUY", "SELL")
@@ -266,22 +284,30 @@ def generate_signal(
         and rr_ok
         and momentum_ok
         and not_extended
-        and regime_ok
+        and not hard_choppy_block
     )
+
+    # breakout mode should also work in mild chop
     breakout_strong = (
-        trend >= 75
-        and confidence >= 70
-        and volume_ratio >= 1.2
+        trend >= 65
+        and confidence >= 55
+        and volume_ratio >= 0.65
     )
 
     breakout_entry = (
         raw_action in ("BUY", "SELL")
         and breakout_strong
-        and regime_ok
+        and choppy_score < 5
     )
-
     # FINAL EXECUTION (UPGRADE)
     v2_should_execute = v2_should_execute or breakout_entry
+
+    print(
+    f"[V2 REGIME] symbol={symbol} choppy={is_choppy} choppy_score={choppy_score} "
+    f"min_conf={min_conf} min_rr={min_rr} min_trend={min_trend} min_vol={min_vol} "
+    f"exec={v2_should_execute}",
+    flush=True,
+    )
 
     if final_action == "HOLD" and v2_should_execute:
         final_action = raw_action
