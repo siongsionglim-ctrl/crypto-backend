@@ -40,7 +40,7 @@ def _default_config() -> dict[str, Any]:
 
         # Hunter v2 risk profile
         "max_daily_trades": 5,
-        "min_confidence_pct": 48.0,
+        "min_confidence_pct": 45.0,
         "min_rr_ratio": 1.0,
         "cooldown_minutes": 5,
         "symbol_cooldown_minutes": 20,
@@ -84,17 +84,17 @@ def _default_config() -> dict[str, Any]:
 
         "hunter_version": "v4_futures",
         "hunter_mode": "balanced",          # conservative / balanced / aggressive / sniper
-        "hunter_strong_threshold": 60.0,
-        "hunter_medium_threshold": 48.0,
+        "hunter_strong_threshold": 55.0,
+        "hunter_medium_threshold": 45.0,
         "hunter_min_rr": 1.1,
-        "hunter_min_volume_ratio": 0.45,
+        "hunter_min_volume_ratio": 0.8,
         "hunter_htf_timeframe": "1h",
         "hunter_enable_htf_confirm": True,
         "hunter_enable_regime_filter": True,
         "hunter_wait_pullback_enabled": True,
         "hunter_overextension_penalty": 15.0,
         "hunter_momentum_trigger_pct": 60.0,
-        "hunter_momentum_volume_ratio": 0.45,
+        "hunter_momentum_volume_ratio": 0.8,
             }
 
 

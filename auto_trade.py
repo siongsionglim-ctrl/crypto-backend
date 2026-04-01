@@ -73,9 +73,9 @@ def run_auto_trade(config: dict):
         sl_mode=str(config.get("sl_mode", "hybrid")),
         sl_atr_multiplier=float(config.get("sl_atr_multiplier", 1.35)),
         sl_buffer_atr=float(config.get("sl_buffer_atr", 0.15)),
-        sl_buffer_pct=float(config.get("sl_buffer_pct", 0.10)),
-        min_stop_pct=float(config.get("min_stop_pct", 0.35)),
-        target_rr=float(config.get("target_rr", config.get("min_rr_ratio", 1.4))),
+        sl_buffer_pct=float(config.get("sl_buffer_pct", 0.0010)),
+        min_stop_pct=float(config.get("min_stop_pct", 0.0035)),
+        target_rr=float(config.get("target_rr", config.get("min_rr_ratio", 1.2))),
     )
 
     action = signal.get("action")
@@ -92,8 +92,8 @@ def run_auto_trade(config: dict):
     risk = evaluate_risk(
         signal=signal,
         max_daily_trades=int(config.get("max_daily_trades", 3)),
-        min_confidence_pct=float(config.get("min_confidence_pct", 70.0)),
-        min_rr_ratio=float(config.get("min_rr_ratio", 1.5)),
+        min_confidence_pct=float(config.get("min_confidence_pct", 45.0)),
+        min_rr_ratio=float(config.get("min_rr_ratio", 1.0)),
         cooldown_minutes=int(config.get("cooldown_minutes", 15)),
         allowed_sides=tuple(config.get("allowed_sides", ["BUY", "SELL"])),
         max_daily_loss_pct=float(config.get("max_daily_loss_pct", 5.0)),

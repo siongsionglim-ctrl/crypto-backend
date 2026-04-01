@@ -134,13 +134,13 @@ def _score_signal(signal: dict, config: dict | None = None, htf_signal: dict | N
 
     # Hard penalties
     if action == "HOLD":
-        total -= 12.0
+        total -= 8.0
         reasons.append("penalty=hold")
     if rr < _safe_float(config.get("hunter_min_rr"), 1.3):
-        total -= 8.0
+        total -= 5.0
         reasons.append("penalty=low_rr")
     if volume_ratio < _safe_float(config.get("hunter_min_volume_ratio"), 1.0):
-        total -= 5.0
+        total -= 3.0
         reasons.append("penalty=low_volume")
 
     total = _clamp(total, 0.0, 100.0)

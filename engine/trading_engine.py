@@ -88,29 +88,29 @@ def decide_action_from_idea(idea):
 
     regime = _calc_market_regime(idea)
 
-    if confidence < 50:
+    if confidence < 38:
         return "HOLD", f"V4 filter: very low confidence ({confidence:.1f}%)"
 
-    if rr < 0.9:
+    if rr < 0.75:
         return "HOLD", f"V4 filter: very weak RR ({rr:.2f})"
 
     if price <= 0 or entry <= 0 or sl <= 0 or tp <= 0:
         return "HOLD", "V4 filter: invalid levels"
 
-    if regime["is_choppy"]:
+    if regime["is_choppy"] and regime["choppy_score"] >= 4:
         return "HOLD", (
             f"V4 choppy caution: market messy "
             f"(score {regime['choppy_score']}/5, edge {regime['direction_edge']:.1f})"
         )
 
     extension_pct = abs(price - entry) / price * 100.0 if price else 0.0
-    if extension_pct > 2.5:
+    if extension_pct > 5:
         return "HOLD", f"V4 filter: price too extended from entry ({extension_pct:.2f}%)"
 
     stop_distance_pct = abs(price - sl) / price * 100.0 if price else 0.0
     if stop_distance_pct < 0.20:
         return "HOLD", f"V4 filter: stop too tight ({stop_distance_pct:.2f}%)"
-    if stop_distance_pct > 3.2:
+    if stop_distance_pct > 6:
         return "HOLD", f"V4 filter: stop too wide ({stop_distance_pct:.2f}%)"
 
     breakout_edge = breakout - breakdown

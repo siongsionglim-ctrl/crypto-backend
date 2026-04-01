@@ -167,8 +167,8 @@ def register_closed_position(symbol: str, closed_position: dict | None = None, c
 def evaluate_risk(
     signal: dict,
     max_daily_trades: int = 3,
-    min_confidence_pct: float = 70.0,
-    min_rr_ratio: float = 1.5,
+    min_confidence_pct: float = 45.0,
+    min_rr_ratio: float = 1.0,
     cooldown_minutes: int = 15,
     allowed_sides: tuple[str, ...] = ("BUY", "SELL"),
     max_daily_loss_pct: float = 5.0,
