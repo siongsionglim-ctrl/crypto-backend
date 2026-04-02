@@ -154,6 +154,10 @@ def _rank_candidates(scan_result: dict | None, config: dict | None = None) -> li
     top = (scan_result or {}).get("top", []) or []
     ranked = []
 
+    print(f"[HUNTER RANK] incoming top_count={len(top)}", flush=True)
+    if top:
+        print(f"[HUNTER RANK] first_top={top[:2]}", flush=True)
+
     strong_threshold = _safe_float(config.get("hunter_strong_threshold"), 60.0)
     medium_threshold = _safe_float(config.get("hunter_medium_threshold"), 48.0)
     htf_timeframe = str(config.get("hunter_htf_timeframe") or "1h")
@@ -200,16 +204,34 @@ def _rank_candidates(scan_result: dict | None, config: dict | None = None) -> li
         ranked.append(enriched)
 
     ranked.sort(key=lambda x: x.get("hunter_score", 0.0), reverse=True)
+
+    print(f"[HUNTER RANK] ranked_count={len(ranked)}", flush=True)
+    if ranked:
+        print(f"[HUNTER RANK] best_ranked={ranked[0]}", flush=True)
+
     return ranked
 
 
 def _resolve_best_signal(scan_result: dict | None, config: dict) -> tuple[dict | None, list[dict]]:
     ranked = _rank_candidates(scan_result, config=config)
+
+    print(f"[HUNTER PICK] ranked_count={len(ranked)}", flush=True)
+    if ranked:
+        print(f"[HUNTER PICK] ranked_top3={ranked[:3]}", flush=True)
+
     if not ranked:
+        print("[HUNTER BLOCK] ranked empty", flush=True)
         return None, []
 
     best = ranked[0]
     decision = str(best.get("v4_decision") or "SKIP").upper()
+
+    print(
+        f"[HUNTER PICK] best_symbol={best.get('symbol')} "
+        f"action={best.get('action')} raw_action={best.get('raw_action')} "
+        f"decision={decision} score={best.get('hunter_score')}",
+        flush=True,
+    )
 
     if decision == "AUTO_TRADE":
         best["v4_quality"] = best.get("quality", "STRONG")
@@ -226,9 +248,18 @@ def _resolve_best_signal(scan_result: dict | None, config: dict) -> tuple[dict |
         best["v4_action"] = "WATCHLIST"
         return best, ranked
 
+    # 🔥 DEBUG FORCE MODE
+    raw_action = str(best.get("raw_action") or "").upper().strip()
+    action = str(best.get("action") or "").upper().strip()
+
+    if action == "HOLD" and raw_action in ("BUY", "SELL"):
+        print(f"[HUNTER FIX] forcing HOLD -> {raw_action}", flush=True)
+        best["action"] = raw_action
+
+    print(f"[HUNTER FIX] forcing best candidate anyway: {best.get('symbol')}", flush=True)
     best["v4_quality"] = best.get("quality", "WEAK")
-    best["v4_action"] = "SKIP"
-    return None, ranked
+    best["v4_action"] = "AUTO_TRADE"
+    return best, ranked
 
 
 def run_auto_hunter(config: dict, scan_result: dict | None = None):
