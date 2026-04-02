@@ -87,7 +87,7 @@ def _score_signal(signal: dict, config: dict | None = None, htf_signal: dict | N
     score_breakdown["rr_quality"] = round(rr_quality, 2)
 
     # Volume quality
-    volume_quality = _norm(volume_ratio, 0.95, 1.8) * 10.0
+    volume_quality = _norm(volume_ratio, 0.60, 1.5) * 10.0
     total += volume_quality
     score_breakdown["volume_quality"] = round(volume_quality, 2)
 
@@ -134,13 +134,13 @@ def _score_signal(signal: dict, config: dict | None = None, htf_signal: dict | N
 
     # Hard penalties
     if action == "HOLD":
-        total -= 8.0
+        total -= 6.0
         reasons.append("penalty=hold")
-    if rr < _safe_float(config.get("hunter_min_rr"), 1.3):
-        total -= 5.0
+    if rr < _safe_float(config.get("hunter_min_rr"), 0.8):
+        total -= 4.0
         reasons.append("penalty=low_rr")
-    if volume_ratio < _safe_float(config.get("hunter_min_volume_ratio"), 1.0):
-        total -= 3.0
+    if volume_ratio < _safe_float(config.get("hunter_min_volume_ratio"), 0.8):
+        total -= 2.0
         reasons.append("penalty=low_volume")
 
     total = _clamp(total, 0.0, 100.0)
@@ -570,13 +570,13 @@ def _entry_efficiency_penalty(signal: dict, config: dict) -> float:
     distance_pct = abs(price - entry) / price * 100.0
     penalty = _safe_float(config.get("hunter_overextension_penalty"), 15.0)
 
-    if distance_pct > 2.5:
+    if distance_pct > 4.0:
         return -penalty
-    if distance_pct > 1.2:
-        return -6.0
-    if distance_pct > 0.7:
-        return -2.0
-    return 4.0
+    if distance_pct > 2.0:
+        return -4.0
+    if distance_pct > 1.0:
+        return -1.5
+    return 3.0
 
 def _timing_decision(signal: dict, score: float, config: dict) -> str:
     action = str(signal.get("action") or "").upper().strip()
@@ -612,6 +612,10 @@ def _timing_decision(signal: dict, score: float, config: dict) -> str:
         if action == "SELL" and breakdown >= momentum_trigger:
             return "AUTO_TRADE"
         return "WAIT_PULLBACK"
+    
+    # allow medium-quality signals to trade if engine already says execute now
+    if score >= medium_th and should_execute_now:
+        return "AUTO_TRADE"
 
     if score >= medium_th:
         return "WATCHLIST"
