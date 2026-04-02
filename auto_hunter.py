@@ -267,9 +267,6 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "SUIUSDT",
     ]
 
-    print("[HUNTER DEBUG] scan_result keys =", list((scan_result or {}).keys()), flush=True)
-    print("[HUNTER DEBUG] top count =", len((scan_result or {}).get("top", []) or []), flush=True)
-
     scanner_confidence = float(config.get("scanner_min_confidence_pct", 45.0))
     scanner_rr = float(config.get("scanner_min_rr_ratio", 0.8))
     final_confidence = float(config.get("min_confidence_pct", 52.0))
@@ -288,16 +285,8 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             testnet=bool(config.get("testnet", True)),
         )
 
-    # STEP 2: V4 resolve
+    # STEP 2: resolve best
     best, ranked = _resolve_best_signal(scan_result, config=config)
-    print(f"[EXEC CHECK] best={best}", flush=True)
-    print(f"[EXEC CHECK] auto_trade={config.get('auto_trade')}", flush=True)
-    print(f"[EXEC CHECK] v4_action={best.get('v4_action') if best else None}", flush=True)
-
-    if best:
-        print("[FORCE EXECUTION ENABLED]", flush=True)
-    else:
-        print("[FORCE EXECUTION FAILED - no best]", flush=True)
 
     if not ranked:
         return {
@@ -311,7 +300,6 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
 
     top_candidate = ranked[0]
 
-    # STEP 3: no valid trade
     if not best:
         return {
             "ok": True,
@@ -327,50 +315,10 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "top_candidates": ranked[:5],
             "scan_result": scan_result,
         }
-    print("[FORCE EXECUTION MODE]", flush=True)
 
     decision = str(best.get("v4_decision") or "SKIP").upper()
 
-    symbol = best.get("symbol")
-    action = best.get("action")
-    raw_action = best.get("raw_action")
-
-    if action == "HOLD" and raw_action in ("BUY", "SELL"):
-        print(f"[FINAL FIX] override HOLD -> {raw_action}", flush=True)
-        action = raw_action
-
-    side = normalize_side(action)
-
-    print(
-        f"[FINAL SIGNAL] symbol={symbol} action={action} raw_action={raw_action} side={side}",
-        flush=True,
-    )
-
-    TRADFI_BLOCKLIST = {
-    "XAUUSDT",
-    "XAGUSDT",
-    "PAXGUSDT",
-}
-
-    if str(symbol or "").upper() in TRADFI_BLOCKLIST:
-        print(f"[SYMBOL BLOCK] TradFi symbol blocked: {symbol}", flush=True)
-        return {
-            "ok": True,
-            "mode": "hunter_v4",
-            "status": "NO_TRADE",
-            "symbol": symbol,
-            "score": best.get("hunter_score"),
-            "quality": best.get("quality"),
-            "signal": action,
-            "regime": best.get("regime"),
-            "decision": "BLOCKED_SYMBOL",
-            "reason": f"Blocked TradFi symbol for USDⓈ-M crypto-only mode: {symbol}",
-            "top_candidates": ranked[:5],
-            "scan_result": scan_result,
-        }
-
-
-    # STEP 4: WAIT_PULLBACK
+    # STEP 3: non-execution decisions
     if decision == "WAIT_PULLBACK":
         return {
             "ok": True,
@@ -388,7 +336,6 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "best_signal": best,
         }
 
-    # STEP 5: WATCHLIST
     if decision == "WATCHLIST":
         return {
             "ok": True,
@@ -406,21 +353,21 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "best_signal": best,
         }
 
-    # STEP 6: validate executable
+    # STEP 4: build executable signal ONCE
     symbol = best.get("symbol")
     action = best.get("action")
-
     raw_action = best.get("raw_action")
 
-    # 🔥 FIX: override HOLD if raw_action is valid
     if action == "HOLD" and raw_action in ("BUY", "SELL"):
-        print("[HUNTER FIX] overriding HOLD →", raw_action, flush=True)
+        print(f"[FINAL FIX] override HOLD -> {raw_action}", flush=True)
         action = raw_action
 
     side = normalize_side(action)
+
     print(
-        f"[FINAL SIGNAL] symbol={symbol} action={action} raw={raw_action} side={side}",
-        flush=True
+        f"[FINAL SIGNAL] symbol={symbol} action={action} raw_action={raw_action} "
+        f"side={side} should_execute_now={best.get('should_execute_now')}",
+        flush=True,
     )
 
     if not symbol or not side:
@@ -437,7 +384,26 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "scan_result": scan_result,
         }
 
-    # STEP 7: risk check
+    # STEP 5: block TradFi symbols for crypto-only USDⓈ-M
+    tradfi_blocklist = {"XAUUSDT", "XAGUSDT", "PAXGUSDT"}
+    if str(symbol).upper() in tradfi_blocklist:
+        print(f"[SYMBOL BLOCK] TradFi symbol blocked: {symbol}", flush=True)
+        return {
+            "ok": True,
+            "mode": "hunter_v4",
+            "status": "NO_TRADE",
+            "symbol": symbol,
+            "score": best.get("hunter_score"),
+            "quality": best.get("quality"),
+            "signal": action,
+            "regime": best.get("regime"),
+            "decision": "BLOCKED_SYMBOL",
+            "reason": f"Blocked TradFi symbol for USDⓈ-M crypto-only mode: {symbol}",
+            "top_candidates": ranked[:5],
+            "scan_result": scan_result,
+        }
+
+    # STEP 6: risk check
     risk = evaluate_risk(
         signal=best,
         max_daily_trades=int(config.get("max_daily_trades", 5)),
@@ -459,13 +425,13 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "symbol": best.get("symbol"),
             "score": best.get("hunter_score"),
             "quality": best.get("quality"),
-            "signal": best.get("action"),
+            "signal": action,
             "reason": risk.reason or "Risk rejected",
             "top_candidates": ranked[:5],
             "scan_result": scan_result,
         }
 
-    # STEP 8: auto trade OFF
+    # STEP 7: auto trade OFF
     if not config.get("auto_trade", False):
         return {
             "ok": True,
@@ -474,33 +440,28 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "symbol": best.get("symbol"),
             "score": best.get("hunter_score"),
             "quality": best.get("quality"),
-            "signal": best.get("action"),
+            "signal": action,
             "reason": "Auto trade disabled",
             "top_candidates": ranked[:5],
             "scan_result": scan_result,
         }
 
-    symbol = best.get("symbol")
-    action = best.get("action")
-    raw_action = best.get("raw_action")
-
-    if action == "HOLD" and raw_action in ("BUY", "SELL"):
-        print(f"[FINAL FIX] override HOLD -> {raw_action}", flush=True)
-        action = raw_action
-
-    side = normalize_side(action)
-
-    print(
-        f"[FINAL SIGNAL] symbol={symbol} action={action} raw_action={raw_action} "
-        f"side={side} should_execute_now={best.get('should_execute_now')}",
-        flush=True,
-    )
-
-    # STEP 9: EXECUTE
+    # STEP 8: execute
     try:
-        print(f"[HUNTER EXEC] symbol={symbol} side={side} auto_trade={config.get('auto_trade')} testnet={config.get('testnet')}", flush=True)
-        print(f"[HUNTER EXEC] entry={best.get('entry')} sl={best.get('sl')} tp={best.get('tp')}", flush=True)
-        print(f"[HUNTER EXEC] api_key_present={bool((config.get('api_key') or '').strip())} secret_present={bool((config.get('secret') or '').strip())}", flush=True)
+        print(
+            f"[HUNTER EXEC] symbol={symbol} side={side} auto_trade={config.get('auto_trade')} "
+            f"testnet={config.get('testnet')}",
+            flush=True,
+        )
+        print(
+            f"[HUNTER EXEC] entry={best.get('entry')} sl={best.get('sl')} tp={best.get('tp')}",
+            flush=True,
+        )
+        print(
+            f"[HUNTER EXEC] api_key_present={bool((config.get('api_key') or '').strip())} "
+            f"secret_present={bool((config.get('secret') or '').strip())}",
+            flush=True,
+        )
 
         order = place_market_order(
             exchange_name=config["exchange"],
@@ -518,20 +479,36 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             entry_price=best.get("entry"),
             stop_loss=best.get("sl"),
             take_profit=best.get("tp"),
-    )
+        )
 
         print(f"[HUNTER EXEC OK] order={order}", flush=True)
 
-        print(f"[HUNTER EXEC ERROR] {type(e).__name__}: {e}", flush=True)
-        
     except Exception as e:
+        msg = str(e)
+        print(f"[ORDER ERROR] {type(e).__name__}: {e}", flush=True)
+
+        if "-4411" in msg or "TradFi-Perps agreement" in msg:
+            return {
+                "ok": True,
+                "mode": "hunter_v4",
+                "status": "NO_TRADE",
+                "symbol": symbol,
+                "score": best.get("hunter_score"),
+                "quality": best.get("quality"),
+                "signal": action,
+                "regime": best.get("regime"),
+                "decision": "BLOCKED_SYMBOL",
+                "reason": f"TradFi agreement required for {symbol}",
+                "top_candidates": ranked[:5],
+                "scan_result": scan_result,
+            }
+
         return {
             "ok": False,
             "mode": "hunter_error",
             "reason": f"Order failed: {e}",
             "top_candidates": ranked[:5],
         }
-    print(f"[HUNTER EXEC ERROR] {type(e).__name__}: {e}", flush=True)
 
     return {
         "ok": True,
@@ -540,14 +517,13 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         "symbol": best.get("symbol"),
         "score": best.get("hunter_score"),
         "quality": best.get("quality"),
-        "signal": best.get("action"),
+        "signal": action,
         "regime": best.get("regime"),
         "decision": "AUTO_TRADE",
         "top_candidates": ranked[:5],
         "order": order,
         "reason": "Trade executed",
     }
-
 def _safe_bool(value) -> bool:
     return bool(value)
 

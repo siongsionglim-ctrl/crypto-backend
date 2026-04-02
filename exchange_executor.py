@@ -542,6 +542,22 @@ def place_market_order(
     notional_estimate = final_amount * float(entry_price or 0.0)
     available_balance_usdt = None
 
+    # STEP 1: set leverage FIRST and do not silently ignore failure
+    if market_type == "future" and hasattr(ex, "set_leverage"):
+        try:
+            ex.set_leverage(int(applied_leverage), market_symbol)
+            print(
+                f"[LEVERAGE OK] symbol={market_symbol} requested={requested_leverage} applied={applied_leverage}",
+                flush=True,
+            )
+        except Exception as e:
+            print(
+                f"[LEVERAGE ERROR] symbol={market_symbol} requested={requested_leverage} error={type(e).__name__}: {e}",
+                flush=True,
+            )
+            raise ValueError(f"Failed to set leverage for {market_symbol}: {e}")
+
+    # STEP 2: compute size
     if risk_per_trade_pct is not None and risk_per_trade_pct > 0:
         final_amount, applied_leverage, notional_estimate, available_balance_usdt = _compute_dynamic_amount(
             ex,
@@ -556,24 +572,55 @@ def place_market_order(
             max_margin_allocation_pct=max_margin_allocation_pct,
             safety_buffer_pct=safety_buffer_pct,
         )
-        print(
-            f"[SIZE DEBUG] symbol={market_symbol} entry={entry_price} sl={stop_loss} "
-            f"amount={final_amount} leverage={applied_leverage} "
-            f"notional={notional_estimate:.2f} balance={available_balance_usdt}",
-            flush=True,
-        )
-        
     else:
-        final_amount, notional_estimate = _ensure_minimums(ex, exchange_name, market_symbol, final_amount, entry_price, market_type)
+        final_amount, notional_estimate = _ensure_minimums(
+            ex,
+            exchange_name,
+            market_symbol,
+            final_amount,
+            entry_price,
+            market_type,
+        )
         available_balance_usdt = _balance_usdt(ex)
-        if final_amount <= 0:
-            raise ValueError("Order amount rounded to zero. Increase amount.")
 
-    if market_type == "future" and hasattr(ex, "set_leverage"):
-        try:
-            ex.set_leverage(int(applied_leverage), market_symbol)
-        except Exception:
-            pass
+    # STEP 3: final hard cap by wallet balance
+    entry_price_f = float(entry_price or 0.0)
+    available_balance_usdt = float(available_balance_usdt or 0.0)
+
+    if market_type == "future" and entry_price_f > 0 and available_balance_usdt > 0:
+        usable_balance = available_balance_usdt * max(0.0, (100.0 - float(safety_buffer_pct)) / 100.0)
+        max_margin_allowed = usable_balance * max(0.0, float(max_margin_allocation_pct) / 100.0)
+        max_notional_allowed = max_margin_allowed * max(1, int(applied_leverage))
+
+        if max_notional_allowed > 0 and notional_estimate > max_notional_allowed:
+            capped_amount = max_notional_allowed / entry_price_f
+            print(
+                f"[SIZE CAP] symbol={market_symbol} old_amount={final_amount} old_notional={notional_estimate:.2f} "
+                f"cap_notional={max_notional_allowed:.2f} capped_amount={capped_amount}",
+                flush=True,
+            )
+            final_amount = capped_amount
+            notional_estimate = final_amount * entry_price_f
+
+        # clean precision/minimums again after capping
+        final_amount, notional_estimate = _ensure_minimums(
+            ex,
+            exchange_name,
+            market_symbol,
+            final_amount,
+            entry_price_f,
+            market_type,
+        )
+
+    if final_amount <= 0:
+        raise ValueError("Order amount rounded to zero after sizing/capping. Increase amount or reduce restrictions.")
+
+    print(
+        f"[SIZE DEBUG] symbol={market_symbol} entry={entry_price} sl={stop_loss} "
+        f"amount={final_amount} leverage={applied_leverage} "
+        f"notional={notional_estimate:.2f} balance={available_balance_usdt}",
+        flush=True,
+    )
 
     params = {}
 
@@ -634,7 +681,6 @@ def place_market_order(
         "max_margin_allocation_pct": max_margin_allocation_pct,
         "safety_buffer_pct": safety_buffer_pct,
     }
-
 
 def _normalize_symbol(exchange_name: str, market_symbol: str) -> str:
     s = str(market_symbol or "").replace("/", "").replace(":USDT", "").replace(":USDC", "")
