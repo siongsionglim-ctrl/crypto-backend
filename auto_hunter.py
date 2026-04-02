@@ -290,6 +290,14 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
 
     # STEP 2: V4 resolve
     best, ranked = _resolve_best_signal(scan_result, config=config)
+    print(f"[EXEC CHECK] best={best}", flush=True)
+    print(f"[EXEC CHECK] auto_trade={config.get('auto_trade')}", flush=True)
+    print(f"[EXEC CHECK] v4_action={best.get('v4_action') if best else None}", flush=True)
+
+    if best:
+        print("[FORCE EXECUTION ENABLED]", flush=True)
+    else:
+        print("[FORCE EXECUTION FAILED - no best]", flush=True)
 
     if not ranked:
         return {
