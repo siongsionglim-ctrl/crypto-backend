@@ -407,7 +407,13 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             entry_price=best.get("entry"),
             stop_loss=best.get("sl"),
             take_profit=best.get("tp"),
+            print(f"[HUNTER EXEC] symbol={symbol} side={side} auto_trade={config.get('auto_trade')} testnet={config.get('testnet')}", flush=True)
+            print(f"[HUNTER EXEC] entry={best.get('entry')} sl={best.get('sl')} tp={best.get('tp')}", flush=True)
+            print(f"[HUNTER EXEC] api_key_present={bool((config.get('api_key') or '').strip())} secret_present={bool((config.get('secret') or '').strip())}", flush=True)
         )
+
+        print(f"[HUNTER EXEC ERROR] {type(e).__name__}: {e}", flush=True)
+        
     except Exception as e:
         return {
             "ok": False,
@@ -415,6 +421,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "reason": f"Order failed: {e}",
             "top_candidates": ranked[:5],
         }
+    print(f"[HUNTER EXEC ERROR] {type(e).__name__}: {e}", flush=True)
 
     return {
         "ok": True,

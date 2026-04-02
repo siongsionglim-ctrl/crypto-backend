@@ -42,7 +42,6 @@ _SCAN_CACHE: dict = {
 
 BOT_META_FILE = Path("bot_runtime_meta.json")
 
-
 def _log(message: any) -> None:
     """Ultra safe logging"""
     try:
@@ -297,6 +296,12 @@ def _run_bot_cycle(config: dict) -> dict:
 
         try:
             hunter_result = run_auto_hunter(config, scan_result=scan_result)
+            _log(
+                f"bot mode check: hunter_enabled={config.get('hunter_enabled')} "
+                f"auto_trade={config.get('auto_trade')} "
+                f"testnet={config.get('testnet')} "
+                f"symbol={config.get('symbol')}"
+            )
 
             if not isinstance(hunter_result, dict):
                 hunter_result = {

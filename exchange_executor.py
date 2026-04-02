@@ -577,12 +577,29 @@ def place_market_order(
 
     params = {}
 
-    order = ex.create_market_order(
-        symbol=market_symbol,
-        side=side.lower(),
-        amount=final_amount,
-        params=params,
+    print(
+        f"[ORDER TRY] exchange={exchange_name} market_symbol={market_symbol} "
+        f"side={side} amount={final_amount} entry={entry_price} sl={stop_loss} tp={take_profit} "
+        f"testnet={testnet} market_type={market_type}",
+        flush=True,
+    )
+
+    print(
+        f"[ORDER CONFIG] api_key_present={bool(api_key)} secret_present={bool(secret)} "
+        f"defaultType={getattr(ex, 'options', {}).get('defaultType')}",
+        flush=True,
+    )
+
+    try:
+        order = ex.create_market_order(
+            symbol=market_symbol,
+            side=side.lower(),
+            amount=final_amount,
+            params=params,
         )
+    except Exception as e:
+        print(f"[ORDER ERROR] {type(e).__name__}: {e}", flush=True)
+        raise
 
     exit_orders = {"orders": {}, "warnings": []}
     if market_type == "future" and (take_profit is not None or stop_loss is not None):
