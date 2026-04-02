@@ -340,6 +340,10 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
         action = raw_action
 
     side = normalize_side(action)
+    print(
+        f"[FINAL SIGNAL] symbol={symbol} action={action} raw={raw_action} side={side}",
+        flush=True
+    )
 
     if not symbol or not side:
         return {
