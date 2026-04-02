@@ -288,6 +288,7 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "top_candidates": ranked[:5],
             "scan_result": scan_result,
         }
+    print("[FORCE EXECUTION MODE]", flush=True)
 
     decision = str(best.get("v4_decision") or "SKIP").upper()
 
@@ -330,6 +331,14 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
     # STEP 6: validate executable
     symbol = best.get("symbol")
     action = best.get("action")
+
+    raw_action = best.get("raw_action")
+
+    # 🔥 FIX: override HOLD if raw_action is valid
+    if action == "HOLD" and raw_action in ("BUY", "SELL"):
+        print("[HUNTER FIX] overriding HOLD →", raw_action, flush=True)
+        action = raw_action
+
     side = normalize_side(action)
 
     if not symbol or not side:
@@ -388,6 +397,9 @@ def run_auto_hunter(config: dict, scan_result: dict | None = None):
             "top_candidates": ranked[:5],
             "scan_result": scan_result,
         }
+    
+    print(f"[HUNTER DEBUG] best candidate = {best}", flush=True)
+    print(f"[HUNTER DEBUG] action={best.get('action')} should_execute_now={best.get('should_execute_now')}", flush=True)
 
     # STEP 9: EXECUTE
     try:
