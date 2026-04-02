@@ -77,16 +77,45 @@ def build_exchange(exchange_name, api_key, secret, passphrase=None, testnet=True
     raise ValueError(f"Unsupported exchange: {exchange_name}")
 
 
-def to_market_symbol(exchange_name: str, symbol: str) -> str:
-    if symbol.endswith("USDT"):
-        base = symbol[:-4]
-        quote = "USDT"
-        return f"{base}/{quote}"
-    if symbol.endswith("USDC"):
-        base = symbol[:-4]
-        quote = "USDC"
-        return f"{base}/{quote}"
-    return symbol
+def to_market_symbol(exchange_name, symbol, market_type="future"):
+    exchange_name = (exchange_name or "").lower()
+    market_type = (market_type or "future").lower()
+
+    s = (symbol or "").upper().replace(" ", "")
+
+    # normalize input like BNBUSDT / BNB-USDT / BNB/USDT
+    s = s.replace("-", "/")
+    if "/" not in s:
+        if s.endswith("USDT"):
+            base = s[:-4]
+            quote = "USDT"
+            s = f"{base}/{quote}"
+        else:
+            return s
+
+    if exchange_name == "binance":
+        if market_type == "future":
+            # Binance USDT perpetual unified symbol in CCXT
+            if not s.endswith(":USDT"):
+                return f"{s}:USDT"
+            return s
+        return s
+
+    if exchange_name == "bybit":
+        if market_type == "future":
+            if not s.endswith(":USDT"):
+                return f"{s}:USDT"
+            return s
+        return s
+
+    if exchange_name == "okx":
+        if market_type == "future":
+            if not s.endswith(":USDT"):
+                return f"{s}:USDT"
+            return s
+        return s
+
+    return s
 
 
 def _balance_usdt(ex) -> float:
@@ -534,7 +563,11 @@ def place_market_order(
         market_type=market_type,
     )
 
-    market_symbol = to_market_symbol(exchange_name, symbol)
+    market_symbol = to_market_symbol(exchange_name, symbol, market_type)
+    print(
+        f"[SYMBOL DEBUG] raw_symbol={symbol} market_type={market_type} normalized={market_symbol}",
+        flush=True,
+    )
     requested_leverage = max(1, int(leverage or 1))
     applied_leverage = 1 if market_type == "spot" else requested_leverage
 
@@ -542,17 +575,50 @@ def place_market_order(
     notional_estimate = final_amount * float(entry_price or 0.0)
     available_balance_usdt = None
 
-    # STEP 1: set leverage FIRST and do not silently ignore failure
+   # STEP 1: set leverage FIRST and do not silently ignore failure
     if market_type == "future" and hasattr(ex, "set_leverage"):
         try:
+            ex.load_markets()
+
+            # normalize to correct futures symbol first
+            market_symbol = to_market_symbol(exchange_name, symbol, market_type)
+            print(
+                f"[LEVERAGE PRECHECK] raw_symbol={symbol} market_symbol={market_symbol}",
+                flush=True,
+            )
+
+            if market_symbol not in ex.markets:
+                raise ValueError(f"Market not found: {market_symbol}")
+
+            market = ex.markets[market_symbol]
+            is_contract = bool(market.get("contract"))
+            is_linear = bool(market.get("linear"))
+            is_inverse = bool(market.get("inverse"))
+
+            print(
+                f"[LEVERAGE CHECK] input_symbol={symbol} resolved_symbol={market_symbol} "
+                f"type={market.get('type')} spot={market.get('spot')} swap={market.get('swap')} "
+                f"contract={is_contract} linear={is_linear} inverse={is_inverse}",
+                flush=True,
+            )
+
+            if not is_contract or not (is_linear or is_inverse):
+                raise ValueError(
+                    f"Cannot set leverage on non-contract market: {market_symbol} "
+                    f"(contract={is_contract}, linear={is_linear}, inverse={is_inverse})"
+                )
+
             ex.set_leverage(int(applied_leverage), market_symbol)
+
             print(
                 f"[LEVERAGE OK] symbol={market_symbol} requested={requested_leverage} applied={applied_leverage}",
                 flush=True,
             )
+
         except Exception as e:
             print(
-                f"[LEVERAGE ERROR] symbol={market_symbol} requested={requested_leverage} error={type(e).__name__}: {e}",
+                f"[LEVERAGE ERROR] symbol={market_symbol} requested={requested_leverage} "
+                f"error={type(e).__name__}: {e}",
                 flush=True,
             )
             raise ValueError(f"Failed to set leverage for {market_symbol}: {e}")
